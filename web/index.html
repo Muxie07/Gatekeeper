@@ -32,11 +32,20 @@ pre{white-space:pre-wrap;margin:2px 0;word-break:break-word}
 #controls{display:contents}#controls.hidden,.hidden{display:none}
 .pbar{display:grid;grid-template-columns:90px 1fr 60px;gap:6px;align-items:center;font-size:12px;margin:2px 0}
 .verdict{margin-top:8px;padding:8px 10px;border-radius:8px;border:1px solid;font-weight:700}
+.world{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:12px;align-items:start}
+.world canvas{width:100%;height:auto;aspect-ratio:16/9;border-radius:8px;display:block;background:#1b2330;image-rendering:auto}
+.gctl{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:8px}
+.side h3{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--mut);margin:10px 0 4px}.side h3:first-child{margin-top:0}
+.acts{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}.acts button{min-width:118px}
+.modekey span{display:inline-block;margin:2px 6px 2px 0}
+.b-human{color:#8e5bd8;border-color:#8e5bd8}
+@media (max-width:1150px){.world{grid-template-columns:1fr}}
 @media (max-width:600px){header{padding:8px 10px}main{padding:8px 10px;grid-template-columns:1fr}}
 </style></head><body>
+<script src="game.js"></script>
 <header>
   <h1>Gatekeeper</h1><span id="badge" class="badge b-idle">IDLE</span><span id="status" class="mut">idle</span>
-  <nav><button id="tLive" class="on">Live</button> <button id="tHist">History (replay)</button></nav>
+  <nav><button id="tLive" class="on">Watch the AI</button> <button id="tHuman">Play yourself</button> <button id="tHist">History (replay)</button></nav>
   <span style="flex:1"></span>
   <span id="controls">
   <label>mode <select id="mode"><option value="mock">mock (simulated)</option><option value="real">real (Gemini)</option></select></label>
@@ -49,6 +58,16 @@ pre{white-space:pre-wrap;margin:2px 0;word-break:break-word}
 </header>
 <div id="banner"></div>
 <div id="live">
+<main style="padding-bottom:0"><section class="card wide" id="worldCard"><h2>MiniCraft world — what the agent is doing right now</h2>
+<div class="world"><div><canvas id="world" width="960" height="540" aria-label="MiniCraft game world"></canvas>
+<div class="gctl"><button id="gPause">Pause view</button><button id="gStep">Step ▸</button><button id="gSkip" title="Jump to the next game">Next game ⏭</button><button id="gMoment" title="Jump to the next lesson, gate decision or rollback">Next lesson / decision ⏭⏭</button>
+<label>speed <select id="gSpeed"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option><option value="8">8×</option></select></label>
+<label id="gFollowWrap"><input id="gFollow" type="checkbox" checked> follow live</label><span id="gInfo" class="mut mono"></span></div></div>
+<div class="side" id="gSide"><h3>Who is playing</h3><div id="gWho" class="mut">nothing yet</div>
+<h3>Latest decision</h3><div id="gDecision" class="mut">–</div>
+<h3>Game engine state</h3><div id="gState" class="mut">–</div>
+<h3>Modes</h3><div class="modekey mut"><span class="badge b-real">REAL GEMINI</span><span class="badge b-mock">MOCK</span><span class="badge b-replay">REPLAY</span><span class="badge b-human">HUMAN</span><div style="margin-top:4px">The picture is drawn from the Python engine's state after every step. Walking between trees and rocks is animation only: MiniCraft has no positions or health points, and the zombie destroys wood and the table instead.</div></div></div>
+</div></section></main>
 <main>
   <section class="card"><h2>Game state</h2><div id="game" class="mut">Nothing running. Press Start, or “Start a new game”.</div></section>
   <section class="card"><h2>Quota meter</h2><div id="quota" class="mut">–</div><div id="budget" class="mut mono" style="margin-top:6px"></div></section>
@@ -60,6 +79,11 @@ pre{white-space:pre-wrap;margin:2px 0;word-break:break-word}
   <section class="card"><h2>Gate panel</h2><div id="gate" class="mut">No candidate yet.</div></section>
   <section class="card wide"><h2>Event log</h2><div id="events" class="log mono"></div></section>
 </main></div>
+<div id="human" class="hidden"><main><section class="card wide"><h2>Play yourself — <span class="badge b-human">HUMAN · no AI, no API calls</span></h2>
+<div class="world"><div><canvas id="hworld" width="960" height="540" aria-label="MiniCraft world you control"></canvas>
+<div class="acts" id="hActs"></div><div class="gctl"><button id="hNew" class="go">New world</button><span class="mut">keys 1–7 pick an action</span></div></div>
+<div class="side"><h3>How it works</h3><div class="mut">You choose the action; the same Python MiniCraft engine the AI plays decides what happens. Nothing is sent to any model and no quota is used. Same rules the AI faces: recipes are not told to you, failures explain the rule.</div>
+<h3>Game engine says</h3><div id="hState" class="mut">Press “New world”.</div></div></div></section></main></div>
 <div id="hist" class="hidden"><main><section class="card wide"><h2>History — <span class="badge b-replay">REPLAY (saved, not live)</span></h2><div id="histBody" class="mut">Loading…</div></section></main></div>
 <script>
 const $=id=>document.getElementById(id);
@@ -69,7 +93,7 @@ const ICON={wood:"🪵",stone:"🪨",iron:"🔩",table:"🪑",pickaxe:"⛏️",s
 const REPLAY=new URLSearchParams(location.search).get("replay");
 let lastId=0,cur={},stoppedReason="",es=null,nodes={},nodeInfo={},curVersion="",lessons=[],selNode="",reports={},verLessons={},REPLAY_SIM=false;
 
-function setBadge(text,mode){const b=$("badge");b.textContent=text;b.className="badge "+({real:"b-real",mock:"b-mock",replay:"b-replay"}[mode]||"b-idle")}
+function setBadge(text,mode){const b=$("badge");b.textContent=text;b.className="badge "+({real:"b-real",mock:"b-mock",replay:"b-replay",human:"b-human"}[mode]||"b-idle")}
 function banner(msg,kind){const b=$("banner");b.style.display=msg?"block":"none";b.textContent=msg;b.style.color=`var(--${kind||"warn"})`;b.style.borderColor=`var(--${kind||"warn"})`}
 function pushRow(box,node,max){box.insertBefore(node,box.firstChild);while(box.children.length>(max||200))box.removeChild(box.lastChild)}
 function callTag(e){ // LIVE (fresh call, latency) / CACHED / SIMULATED, straight from the call log fields
@@ -180,7 +204,7 @@ function resetView(){["decisions","mistakes","events"].forEach(i=>$(i).textConte
   $("proposal").textContent="";$("nodeInfo").textContent="";renderGate();renderHarness();renderBA();banner("")}
 
 function handle(e){
-  lastId=Math.max(lastId,e.id||0);logEvent(e);
+  lastId=Math.max(lastId,e.id||0);logEvent(e);if(window.gv)gv.push(e);
   switch(e.type){
   case"run_start":resetView();stoppedReason="";setBadge(REPLAY?"REPLAY (recorded"+(e.mode==="mock"||REPLAY_SIM?", simulated":"")+")":e.badge,REPLAY?"replay":e.mode);
     $("budget").textContent=e.budget?"Budget per round (model calls): first ≈"+e.budget.first_round_typical+" typical / "+e.budget.first_round_worst+" worst; later ≈"+e.budget.later_round_typical+" / "+e.budget.later_round_worst:"";break;
@@ -219,7 +243,7 @@ async function refreshState(){
   if(REPLAY)return;
   try{const s=await (await fetch("/state")).json();
     $("status").textContent=s.status+(s.playing?" · playing a demo game":"")+(s.params&&s.params.rounds?` · ${s.params.rounds} rounds max`:"");
-    if(s.badge&&!$("hist").offsetParent)setBadge(s.badge,s.mode||"idle");
+    if(s.badge&&$("live").offsetParent)setBadge(s.badge,s.mode||"idle");
     renderQuota(s.quota);
     const busy=(s.status==="running"||s.status==="paused");
     $("start").disabled=busy||s.playing;$("play").disabled=s.status==="running"||s.playing;
@@ -240,9 +264,13 @@ $("play").onclick=()=>post("/play",mode());
 $("mode").onchange=async()=>{$("confirmWrap").classList.toggle("hidden",$("mode").value!=="real");
   if($("mode").value==="real"){const b=await (await fetch("/budget")).json();
     banner(`Real mode uses your FREE Gemini quota. One round ≈ ${b.first_round_typical} requests typical (${b.first_round_worst} worst case) for the first round, ≈${b.later_round_typical} later; “Start a new game” uses about 10 live requests. Confirm the box, then Start.`,"warn")}else banner("")};
-function tab(h){$("live").classList.toggle("hidden",h);$("hist").classList.toggle("hidden",!h);$("tLive").classList.toggle("on",!h);$("tHist").classList.toggle("on",h);
-  if(h){setBadge("REPLAY (saved)","replay");loadHistory()}else if(REPLAY)setBadge("REPLAY (recorded)","replay");else refreshState()}
-$("tLive").onclick=()=>tab(false);$("tHist").onclick=()=>tab(true);
+function tab(which){const w=which===true?"hist":which===false?"live":which;
+  ["live","human","hist"].forEach(k=>$(k).classList.toggle("hidden",k!==w));
+  $("tLive").classList.toggle("on",w==="live");$("tHuman").classList.toggle("on",w==="human");$("tHist").classList.toggle("on",w==="hist");
+  if(w==="hist"){setBadge("REPLAY (saved)","replay");loadHistory()}
+  else if(w==="human"){setBadge("HUMAN · you are playing, no AI","human");if(!hv.S)humanNew()}
+  else if(REPLAY)setBadge("REPLAY (recorded"+(REPLAY_SIM?", simulated":"")+")","replay");else refreshState()}
+$("tLive").onclick=()=>tab("live");$("tHist").onclick=()=>tab("hist");$("tHuman").onclick=()=>tab("human");
 async function loadHistory(){
   const b=$("histBody");b.textContent="";
   if(REPLAY){b.textContent="Replay mode: the saved experiment table is not part of a recording.";return}
@@ -268,12 +296,62 @@ async function startReplay(){
   let text;try{const r=await fetch("/replay?file="+encodeURIComponent(REPLAY));if(!r.ok)throw 0;text=await r.text()}catch(_){text=await (await fetch(REPLAY)).text()}
   let ev=parseEvents(text);const starts=ev.map((e,i)=>e.type==="run_start"?i:-1).filter(i=>i>=0);if(starts.length)ev=ev.slice(starts[starts.length-1]);
   replayEvents=ev;REPLAY_SIM=ev.some(x=>x.mode==="mock");setBadge("REPLAY (recorded"+(REPLAY_SIM?", simulated":"")+")","replay");playFrom(0)}
-function playFrom(i){clearTimeout(replayTimer);replayPos=i;if(i===0){lastId=0;resetView()}
+let skipReq=false;
+const GAME_EV=new Set(["episode_start","step","episode_end","proposal","decision","rollback"]);
+function playFrom(i){clearTimeout(replayTimer);replayPos=i;if(i===0){lastId=0;resetView();gv.reset()}
   const delay=+$("speed").value;
-  const tick=()=>{if(replayPos>=replayEvents.length){banner("REPLAY finished ("+replayEvents.length+" recorded events). Nothing was called.","warn");return}
-    const n=delay===0?replayEvents.length:1;for(let k=0;k<n&&replayPos<replayEvents.length;k++){const e=replayEvents[replayPos++];handle(e);if(e.type==="run_start")setBadge("REPLAY (recorded"+(e.mode==="mock"||REPLAY_SIM?", simulated":"")+")","replay")}
+  const fin=()=>banner("REPLAY finished ("+replayEvents.length+" recorded events). Nothing was called.","warn");
+  const one=()=>{const e=replayEvents[replayPos++];handle(e);if(e.type==="run_start")setBadge("REPLAY (recorded"+(e.mode==="mock"||REPLAY_SIM?", simulated":"")+")","replay");return e};
+  const tick=()=>{if(replayPos>=replayEvents.length){if(!gv.busy())return fin();replayTimer=setTimeout(tick,100);return}
+    if(delay===0){while(replayPos<replayEvents.length)one();gv.fastForward();return fin()}
+    if(skipReq){const toM=skipReq==="moment";skipReq=false;gv.skipGame(toM);   // skip: run events up to the next game / learning moment
+      const stop=toM?["proposal","decision","rollback"]:["episode_start","proposal","decision","rollback"];
+      while(replayPos<replayEvents.length){const nx=replayEvents[replayPos];if(stop.includes(nx.type))break;one()}
+      gv.skipGame(toM);replayTimer=setTimeout(tick,0);return}
+    if(gv.busy()){replayTimer=setTimeout(tick,60);return}       // wait for the picture to catch up
+    while(replayPos<replayEvents.length&&!GAME_EV.has(one().type)){}
     replayTimer=setTimeout(tick,delay)};tick()}
 $("restart").onclick=()=>playFrom(0);
+
+// ---- the game world ---------------------------------------------------------------------
+function tagFor(S){if(!S)return el("span","mut","–");if(S.mode==="human")return el("span","badge b-human","HUMAN");
+  if(S.mode==="mock")return el("span","tag t-sim","SIMULATED");if(!S.step)return el("span","tag t-live","REAL");return callTag(S)}
+function showSide(S,stepEv){
+  const w=$("gWho");w.textContent="";if(!S){w.textContent="nothing yet";return}
+  w.appendChild(tagFor(S));w.appendChild(document.createTextNode(" "+[S.mode==="real"?"Gemini (real model)":S.mode==="mock"?"mock agent (simulated, no model)":"?","harness "+S.version,S.label,S.suite+" world "+S.seed].filter(Boolean).join(" · ")));
+  const d=$("gDecision");d.textContent="";
+  if(stepEv&&stepEv.seed===S.seed&&S.step){d.appendChild(el("div","mono",`model replied: ${JSON.stringify(stepEv.raw)}`));
+    d.appendChild(el("div","mono",`engine action: ${stepEv.action}`));d.appendChild(el("div",(stepEv.outcome||"").includes("failed")?"bad":"ok",stepEv.outcome));
+    if(stepEv.call_id)d.appendChild(el("div","mono mut","call "+stepEv.call_id))}else d.textContent="–";
+  const st=$("gState");st.textContent="";const inv=Object.entries(S.inventory||{}).filter(([,v])=>v).map(([k,v])=>k+" ×"+v).join(", ")||"empty";
+  st.appendChild(el("div","",`step ${S.step}/${S.max_steps} · goal ${S.task}`));st.appendChild(el("div","",`inventory: ${inv}`));
+  st.appendChild(el("div","",S.sheltered?"sheltered":S.cue?"groaning nearby (zombie world)":"no threat signalled"));
+  st.appendChild(el("div","mut mono",`shown = backend step ${S.step} of world ${S.seed}`))}
+const gv=new GameView($("world"),{context:REPLAY?"replay":"live",onShow:showSide});window.gv=gv;
+gv.reset=function(){this.queue=[];this.anim=null;this.S=null;this.skipped=0;this.overlay=null;this.toast=null;this.emit()};
+$("gPause").onclick=()=>{if(gv.paused){gv.play();$("gPause").textContent="Pause view"}else{gv.pause();$("gPause").textContent="Play view"}};
+$("gStep").onclick=()=>{gv.stepOnce();$("gPause").textContent="Play view"};
+$("gSkip").onclick=()=>{if(REPLAY)skipReq="game";else gv.skipGame(false)};
+$("gMoment").onclick=()=>{if(REPLAY)skipReq="moment";else gv.skipGame(true)};
+$("gSpeed").onchange=()=>gv.setSpeed(+$("gSpeed").value);
+$("gFollow").onchange=()=>{gv.follow=$("gFollow").checked};
+if(REPLAY)$("gFollowWrap").classList.add("hidden");
+setInterval(()=>{const S=gv.S;$("gInfo").textContent=S?`showing step ${S.step} of ${S.suite} world ${S.seed} · ${gv.queue.length} queued`:""},400);
+
+// ---- play yourself: the Python engine decides, the page only sends the chosen action -------
+const ACTS=["collect wood","collect stone","collect iron","craft table","craft pickaxe","craft sword","shelter"];
+const hv=new GameView($("hworld"),{context:"human",onShow:S=>{const b=$("hState");b.textContent="";if(!S)return;
+  b.appendChild(el("div","",`world ${S.seed} · goal ${S.task} · step ${S.step}/${S.max_steps}`));
+  if(S.outcome)b.appendChild(el("div",S.outcome.includes("failed")?"bad":"ok",S.outcome));
+  b.appendChild(el("div","",S.sheltered?"sheltered":S.cue?"You hear groaning nearby.":""))}});window.hv=hv;
+async function hpost(path,body){try{const r=await fetch(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body||{})});
+  const j=await r.json();if(!r.ok){banner(j.error||"refused","bad");return null}return j}catch(_){banner("Play yourself needs the local app (python app.py); it is not available on the static site.","warn");return null}}
+async function humanNew(){const s=await hpost("/human/new");if(s){banner("");hv.push({...s,type:"human_start"})}}
+async function humanAct(a){const s=await hpost("/human/act",{action:a});if(!s)return;hv.push({...s,type:"human_step"});
+  if(s.done)hv.push({type:"episode_end",success:s.success,steps:s.step,mistakes:s.mistakes})}
+ACTS.forEach((a,i)=>{const b=el("button","",`${i+1} · ${a}`);b.onclick=()=>humanAct(a);$("hActs").appendChild(b)});
+$("hNew").onclick=humanNew;
+document.addEventListener("keydown",k=>{if($("human").classList.contains("hidden"))return;const n=+k.key;if(n>=1&&n<=7)humanAct(ACTS[n-1])});
 
 if(new URLSearchParams(location.search).get("speed")==="instant")$("speed").value="0";
 if(REPLAY){startReplay()}else{connect();refreshState();setInterval(refreshState,2500)}

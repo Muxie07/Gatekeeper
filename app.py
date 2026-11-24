@@ -27,6 +27,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 from gk.calllog import CallLog, LoggedProvider
+from gk.env import ACTIONS, MiniCraft
 from gk.evaluator import task_for
 from gk.harness import Harness
 from gk.lab import Control, resume_hint, round_budget
@@ -37,6 +38,8 @@ from gk.setup import make_mock, make_real
 HERE = os.path.dirname(os.path.abspath(__file__))
 MAX_ROUNDS = 6      # server-side cap, whatever the page asks for
 MAX_EVENTS = 20000  # in-memory event log (events.jsonl and experiments.jsonl are the permanent records)
+HUMAN_BASE = 800000  # human-played worlds: never used by any suite, never sent to a model
+DEMO_MOCK_PACE = 0.9  # seconds per step for a MOCK demo game, so it can be watched
 DEMO_BASE = 900000  # demo worlds: seeds 900000+counter, never used by any suite, so never cached
 LOCAL_HOSTS = ("localhost", "127.0.0.1", "[::1]")
 
@@ -63,6 +66,7 @@ class Runner:
         self.params: dict = {}
         self.playing = False
         self.demo_threads: list = []
+        self.human_env, self.human_n, self.human_lock = None, 0, threading.Lock()
         self._events_lock = threading.Lock()
 
     # ---- events -------------------------------------------------------------------------
@@ -227,8 +231,8 @@ class Runner:
             ev.emit = lambda t, **k: self.post(t, mode=stack.mode, **k)
             ev.calllog, ev.label = stack.calllog, "demo game"
             ev.context = {"suite": "demo", "version": harness.version}
-            if stack.mode == "mock":
-                ev.checkpoint = lambda: time.sleep(self.delay)
+            if stack.mode == "mock":   # slow enough to watch on the game canvas
+                ev.checkpoint = lambda: time.sleep(max(self.delay, DEMO_MOCK_PACE) if self.delay else 0)  # 0 in tests
             self.post("demo_start", seed=seed, task=task, version=harness.version, badge=self.badge,
                       mode=stack.mode, lessons=[l["text"] for l in harness.lessons()])
             ep = ev.episode(harness, seed, task, max_steps=14, hazard_p=0.5)
@@ -240,6 +244,38 @@ class Runner:
             self.post("error", message=f"demo game failed: {type(e).__name__}: {e}")
         finally:
             self.playing = False
+
+    # ---- human play: the person picks actions, the Python engine decides what happens ---------
+    def human(self, verb: str, body: dict) -> tuple[int, dict]:
+        """No model, no quota, no experiment records. The browser only sends the chosen action;
+        every outcome below comes from MiniCraft itself."""
+        with self.human_lock:
+            if verb == "new":
+                self.human_n += 1
+                seed = HUMAN_BASE + self.human_n
+                task = body.get("task") if body.get("task") in ("pickaxe", "sword") else task_for(seed, 0.5)
+                self.human_env = MiniCraft(seed, task, max_steps=14, hazard_p=0.5)
+                return 200, self._human_state("")
+            if verb != "act":
+                return 404, {"error": "not found"}
+            env = self.human_env
+            if env is None:
+                return 409, {"error": "start a new world first"}
+            if env.done():
+                return 409, {"error": "this game is over; start a new world"}
+            action = body.get("action")
+            if action not in ACTIONS:
+                return 400, {"error": f"action must be one of {ACTIONS}"}
+            env.step(action)
+            return 200, self._human_state(action)
+
+    def _human_state(self, action: str) -> dict:
+        env = self.human_env
+        return {"mode": "human", "suite": "human", "label": "you", "version": "-",
+                "seed": env.seed, "task": env.task, "hazard": env.hazard, "max_steps": env.max_steps,
+                "step": env.steps, "action": action, "raw": action, "outcome": env.last,
+                "inventory": dict(env.inv), "sheltered": env.sheltered, "cue": env.cue(),
+                "done": env.done(), "success": env.success(), "mistakes": list(env.events)}
 
     # ---- snapshot -----------------------------------------------------------------------
     def snapshot(self) -> dict:
@@ -362,11 +398,13 @@ def make_handler(runner: Runner):
                 return
             u = urlparse(self.path)
             q = parse_qs(u.query)
-            if u.path in ("/", "/index.html"):
-                with open(os.path.join(HERE, "web", "index.html"), "rb") as f:
+            if u.path in ("/", "/index.html", "/game.js"):
+                name = "game.js" if u.path == "/game.js" else "index.html"
+                with open(os.path.join(HERE, "web", name), "rb") as f:
                     data = f.read()
                 self.send_response(200)
-                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Type", "application/javascript; charset=utf-8" if name == "game.js"
+                                 else "text/html; charset=utf-8")
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
                 self.wfile.write(data)
@@ -418,14 +456,17 @@ def make_handler(runner: Runner):
             if not self._local_only():
                 return
             path = urlparse(self.path).path
-            if path not in ("/control", "/play"):
+            if path not in ("/control", "/play", "/human/new", "/human/act"):
                 return self._json(404, {"error": "not found"})
             try:
                 n = int(self.headers.get("Content-Length", 0))
                 body = json.loads(self.rfile.read(n) or b"{}")
             except ValueError:
                 return self._json(400, {"error": "bad JSON"})
-            code, obj = (runner.control_action if path == "/control" else runner.play)(body)
+            if path.startswith("/human/"):
+                code, obj = runner.human(path.rsplit("/", 1)[1], body)
+            else:
+                code, obj = (runner.control_action if path == "/control" else runner.play)(body)
             self._json(code, obj)
 
     return Handler
