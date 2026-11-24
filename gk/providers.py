@@ -294,12 +294,36 @@ class MeteredProvider(Provider):
 DEFAULT_ALLOWED = ("gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-3.6-flash")
 
 
+MAX_SPEND_INR = 0   # the spending cap. Raising it needs a code change AND the user's explicit permission.
+
+
+def check_spend_cap(cfg: dict) -> None:
+    """Refuse to start if a config asks for any spending. There is no paid path to enable."""
+    v = cfg.get("max_spend_inr", 0)
+    if v != MAX_SPEND_INR:
+        raise ValueError(f"max_spend_inr={v!r} refused: the spending cap is Rs {MAX_SPEND_INR}. Only free-tier "
+                         "models can be called; raising the cap requires a code change and explicit permission.")
+
+
+def free_tier_allowlist(requested=None) -> tuple:
+    """A config may only narrow the free-tier allowlist, never add a model to it."""
+    if not requested:
+        return DEFAULT_ALLOWED
+    extra = [m for m in requested if m not in DEFAULT_ALLOWED]
+    if extra:
+        raise ValueError(f"allowed_models {extra} are not on the free-tier allowlist {list(DEFAULT_ALLOWED)}; "
+                         "refusing (could bill).")
+    return tuple(requested)
+
+
 def build_provider(cfg: dict, workdir: str = ".", ledger: "Ledger | None" = None) -> Provider:
     """cfg example: {"provider":"gemini","model":"gemini-3.5-flash-lite","rpm":15,"rpd":500}
-    Optional: "tpd" (tokens/day cap), "allowed_models" (replaces the free-tier allowlist)."""
+    Optional: "tpd" (tokens/day cap), "allowed_models" (can only NARROW the free-tier allowlist),
+    "max_spend_inr" (must be 0: no paid path exists in this code)."""
     kind = cfg["provider"]
     if kind == "gemini":
-        allowed = cfg.get("allowed_models") or DEFAULT_ALLOWED
+        check_spend_cap(cfg)
+        allowed = free_tier_allowlist(cfg.get("allowed_models"))
         if cfg["model"] not in allowed:
             raise ValueError(f"model {cfg['model']!r} is not on the free-tier allowlist {list(allowed)}; "
                              "refusing to call it (could bill).")

@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from .calllog import CallLog, LoggedProvider
 from .lab import Lab
 from .mock import mock_player, mock_proposer
-from .providers import (DEFAULT_ALLOWED, FallbackProvider, Ledger, MockProvider, build_provider)
+from .providers import (DEFAULT_ALLOWED, check_spend_cap, free_tier_allowlist, FallbackProvider, Ledger, MockProvider, build_provider)
 from .real import LLMProposer, RealEvaluator, REAL_SUITES
 
 # Proposer fallback chain: strongest free model first. The 20/day models are proposer-only.
@@ -92,7 +92,8 @@ def _limiter_count(workdir: str, model: str) -> int:
 
 def make_real(config_path: str = "config.json", workdir: str = ".", calllog: CallLog | None = None) -> Stack:
     cfg = json.load(open(config_path))
-    allowed = cfg.get("allowed_models") or list(DEFAULT_ALLOWED)
+    check_spend_cap(cfg)
+    allowed = list(free_tier_allowlist(cfg.get("allowed_models")))
     ledger = Ledger(os.path.join(workdir, "usage_ledger.json"))
     pmodels = cfg.get("proposer", {}).get("models") or DEFAULT_PROPOSERS
     limits = {cfg["model"]: {"rpd": cfg.get("rpd", 500), "tpd": cfg.get("tpd", 0)}}
