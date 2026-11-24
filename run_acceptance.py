@@ -19,7 +19,7 @@ import argparse
 import os
 import sys
 
-from gk.acceptance import PHASES, acceptance_budget, final_comparison, read_rows, write_all
+from gk.acceptance import PHASES, acceptance_budget, final_comparison, preflight, read_rows, write_all
 from gk.harness import placebo
 from gk.lab import resume_hint
 from gk.providers import QuotaExhausted, RateLimitError, TransientError
@@ -99,6 +99,13 @@ def main():
     guard("baseline", lambda: lab.measure("original"))
     if not stopped:
         phases["baseline"] = "done"
+        res = guard("baseline", lambda: preflight(lab))
+        if res and not res[0]:
+            stopped = res[2]
+            phases["baseline"] = "regression suite at floor"
+        elif res:
+            print(f"  pre-flight: {res[2]}")
+    if not stopped:
         print("\n== phase 1: honest proposer until one improvement is accepted")
         lab.phase = "honest"
         st = lab.run(args.honest_rounds, "honest", stop_when_accepted=True)

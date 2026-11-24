@@ -66,3 +66,16 @@ def placebo(h: Harness, length: int = 90) -> Harness:
     """Parent + a content-free lesson of about `length` characters (an attention control)."""
     text = (PLACEBO_SENTENCE * (length // len(PLACEBO_SENTENCE) + 1))[:length].strip()
     return h.with_patch(add_lessons(h, [{"tag": "placebo", "text": text}]))
+
+
+def added_text(parent: Harness, child: Harness) -> str:
+    """The lesson text a candidate adds to its parent (empty if it adds none)."""
+    old = {l["text"] for l in parent.lessons()}
+    return " ".join(l["text"] for l in child.lessons() if l["text"] not in old)
+
+
+def placebo_for(parent: Harness, child: Harness, default: int = 90) -> Harness:
+    """Content-free control whose length matches the candidate's added text (deterministic, so the
+    cache key is stable). Candidates that add no text get the default length."""
+    n = len(added_text(parent, child)) or default
+    return placebo(parent, max(n, 20))

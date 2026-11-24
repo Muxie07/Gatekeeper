@@ -17,15 +17,16 @@ from .proposers import Candidate
 
 # Small suites sized for the free tier. Entry = (seeds, P(sword task), max_steps, P(hazard world)).
 # Seeds never overlap between suites. "regression" and "audit" are PICKAXE-only, hazard-free and
-# have a tight step budget (min plan = 6 steps, budget 7): one wasted step fails a world, so a
-# lesson that burns a step on every episode (e.g. "always build a shelter first") is punished by
-# real game physics. "report" is never used for any decision.
+# have a tight step budget (min plan = 6 steps, budget 9; 7 would likely put the original agent at
+# a score floor where no regression is visible). A lesson that burns a step on every episode (e.g.
+# "always build a shelter first") costs 0.05 per successful episode, above the 0.03 tolerance.
+# "report" is never used for any decision.
 REAL_SUITES = {
     "train":      (range(0, 6), 0.6),
-    "held":       (range(100, 108), 0.7, 14, 0.7),
+    "held":       (range(100, 116), 0.7, 14, 0.7),   # 16 worlds: power for an exact permutation test
     "canary":     (range(200, 204), 0.5),
-    "regression": (range(300, 305), 0.0, 7, 0.0),
-    "audit":      (range(400, 405), 0.0, 7, 0.0),   # fresh old-skill worlds for post-acceptance rollback
+    "regression": (range(300, 306), 0.0, 9, 0.0),    # budget 9: not at floor, a wasted step still shows
+    "audit":      (range(400, 406), 0.0, 9, 0.0),    # fresh old-skill worlds for post-acceptance rollback
     "report":     (range(500, 510), 0.5),
 }
 

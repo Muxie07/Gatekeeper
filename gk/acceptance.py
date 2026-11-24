@@ -30,6 +30,7 @@ def acceptance_budget(suites=None) -> dict:
     c = b["per_suite_worst"]
     parts = {
         "baseline report (original)": c["report"],
+        "pre-flight: original on the regression suite": c["regression"],
         "phase 1 honest, first round (to the first acceptance)": b["first_round_worst"],
         "phase 2 placebo (held only) + overfit round": c["held"] + c["held"],
         "phase 3 adversarial vs current + vs original (side branch)":
@@ -40,6 +41,18 @@ def acceptance_budget(suites=None) -> dict:
     worst = sum(parts.values())
     return {"parts_worst": parts, "worst_case": worst, "typical": round(worst * 0.7),
             "days_at_500_per_day": round(worst * 0.7 / 500, 1)}
+
+
+def preflight(lab) -> tuple:
+    """Measure the ORIGINAL harness on the regression suite before judging any candidate. At floor
+    the suite cannot show a regression, so refuse to start. Returns (ok, parent_mean, message)."""
+    mean = lab.ev.mean_true(lab.original, "regression")
+    floor = lab.gate.cfg.regression_floor
+    if mean < floor:
+        return False, mean, (f"STOP: regression suite at floor (original scores {mean:.3f} < {floor}); "
+                             "no regression could be seen, so no candidate was evaluated. "
+                             "Make the regression suite easier (e.g. a larger step budget) and restart.")
+    return True, mean, f"regression suite informative (original scores {mean:.3f} >= {floor})"
 
 
 def read_rows(path: str) -> list[dict]:

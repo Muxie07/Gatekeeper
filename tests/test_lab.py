@@ -197,8 +197,9 @@ class LabLoop(unittest.TestCase):
 
     def test_budget_math(self):
         b = round_budget(REAL_SUITES)
-        self.assertEqual(b["per_suite_worst"]["regression"], 5 * 7)
-        self.assertEqual(b["first_round_worst"], 603)
+        self.assertEqual(b["per_suite_worst"]["regression"], 6 * 9)
+        self.assertEqual(b["per_suite_worst"]["held"], 16 * 14)
+        self.assertEqual(b["first_round_worst"], 977)   # 418 parent + 334 child + 224 placebo + 1
         self.assertLess(b["first_round_typical"], b["first_round_worst"])
         self.assertIn("IST", resume_hint())
 

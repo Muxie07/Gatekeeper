@@ -1,4 +1,4 @@
-"""The self-improvement loop as one object, shared by the live app and the acceptance run.
+﻿"""The self-improvement loop as one object, shared by the live app and the acceptance run.
 
     play train episodes with the CURRENT harness (one model call per step)
  -> collect failed episodes -> proposer analyses them and writes ONE lesson
@@ -20,7 +20,7 @@ from zoneinfo import ZoneInfo
 from .env import ENV_VERSION, MAX_STEPS
 from .evaluator import suite_opts, true_score
 from .gate import Gate
-from .harness import Harness, placebo
+from .harness import Harness, placebo_for
 from .providers import QuotaExhausted, RateLimitError, TransientError
 from .real import avoidable_counts
 
@@ -188,7 +188,7 @@ class Lab:
         """side=True: judge the candidate against `parent` WITHOUT touching the main lineage
         (used to test a tempting-but-bad lesson against the original harness)."""
         touched = [k for k in child.files if child.files[k] != parent.files.get(k)]
-        plc = placebo(parent)
+        plc = placebo_for(parent, child)
         self.emit("candidate", kind=kind, parent=parent.version, child=child.version, lesson=note,
                   diff=self.diff(parent, child), proposer_model=proposer_model, side=side)
         r0 = self.requests_fn()
@@ -246,7 +246,7 @@ class Lab:
             return None
         before, after = self.ev.mean_true(parent, "audit"), self.ev.mean_true(child, "audit")
         drop = before - after
-        bad = drop > self.gate.cfg.regression_tol
+        bad = drop > self.gate.cfg.audit_tol
         self.emit("audit", version=child.version, parent=parent.version, before=before,
                   after=after, drop=drop, regressed=bad)
         self.log_experiment({
@@ -331,3 +331,4 @@ class Lab:
                 "nodes": list(self.nodes.values()), "rejected": list(self.rejected),
                 "round": self.round, "phase": self.phase, "last_decision": self.last_decision,
                 "lessons": [l["text"] for l in self.current.lessons()]}
+
