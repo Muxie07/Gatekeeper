@@ -9,7 +9,7 @@ The game is only a testbed; the gate is the project.
 
 Built and run entirely on the **free Gemini API tier** ($0).
 
-**Live dashboard:** https://muxie07.github.io/gatekeeper/ (no API key needed; it replays saved results)
+**Live dashboard:** https://muxie07.github.io/Gatekeeper/ (no API key needed; it replays saved results)
 
 ## Headline finding (real Gemini runs)
 
