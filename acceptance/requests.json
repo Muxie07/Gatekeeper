@@ -1,0 +1,31 @@
+{
+ "limits": {
+  "gemini-3.5-flash-lite": {
+   "rpd": 500,
+   "tpd": 0
+  },
+  "gemini-3.8-flash": {
+   "rpd": 20,
+   "tpd": 0
+  },
+  "gemini-3.6-flash": {
+   "rpd": 20,
+   "tpd": 0
+  }
+ },
+ "per_day": {
+  "2026-11-24": {
+   "gemini-3.5-flash-lite": {
+    "requests": 107,
+    "tokens": 14941
+   },
+   "gemini-3.6-flash": {
+    "requests": 2,
+    "tokens": 341
+   }
+  }
+ },
+ "violations": [],
+ "within_free_tier_limits": true,
+ "note": "counts are real API attempts recorded by the ledger since it was introduced; cache hits are free and not counted"
+}

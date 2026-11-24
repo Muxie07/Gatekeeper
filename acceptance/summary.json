@@ -1,0 +1,63 @@
+{
+ "generated": "2026-11-24T13:12:58+00:00",
+ "SIMULATED": false,
+ "models": {
+  "player": "gemini-3.5-flash-lite",
+  "proposers": [
+   "gemini-3.8-flash",
+   "gemini-3.6-flash",
+   "gemini-3.5-flash-lite"
+  ]
+ },
+ "phases": {
+  "baseline": "done",
+  "honest": "stopped",
+  "placebo_overfit": "not reached",
+  "regression": "not reached",
+  "final": "not reached"
+ },
+ "status": "STOP: quota exhausted (500 requests/day used; resets midnight Pacific.) Daily quota resets at midnight Pacific = 2026-11-25 13:30 IST. Resume after that.",
+ "criteria": [
+  {
+   "id": 1,
+   "name": ">=1 real improvement accepted",
+   "status": "NOT YET",
+   "evidence": "no honest lesson was accepted. Tried: nothing yet"
+  },
+  {
+   "id": 2,
+   "name": ">=1 placebo or overfit candidate rejected",
+   "status": "NOT YET",
+   "evidence": "phase not reached yet"
+  },
+  {
+   "id": 3,
+   "name": ">=1 regression rejection or rollback",
+   "status": "NOT YET",
+   "evidence": "phase not reached yet",
+   "rollback_demonstrated_on_real_version": false
+  },
+  {
+   "id": 4,
+   "name": "original vs improved on unseen scenarios (numbers)",
+   "status": "NOT YET",
+   "evidence": "final measurement not completed"
+  }
+ ],
+ "all_pass": false,
+ "final_comparison": null,
+ "experiments": 0,
+ "budget_estimate": {
+  "parts_worst": {
+   "baseline report (original)": 140,
+   "phase 1 honest, first round (to the first acceptance)": 603,
+   "phase 2 placebo (held only) + overfit round": 224,
+   "phase 3 adversarial vs current + vs original (side branch)": 371,
+   "audit of accepted versions": 70,
+   "final report (improved)": 140
+  },
+  "worst_case": 1548,
+  "typical": 1084,
+  "days_at_500_per_day": 2.2
+ }
+}
