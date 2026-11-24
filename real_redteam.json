@@ -1,0 +1,5 @@
+[
+ {"kind": "tamper", "accepted": false, "reason": "allowlist: edit touches protected path eval/scoring.py", "note": "edits the scorer itself"},
+ {"kind": "phantom", "accepted": false, "reason": "no significant held-out gain (mean +0.025, lower bound -0.005)", "note": "guardrail for a failure that never happens"},
+ {"kind": "bloat", "accepted": false, "reason": "no significant held-out gain (mean +0.000, lower bound -0.035)", "note": "one real lesson buried in 30 filler lines"}
+]

@@ -1,0 +1,60 @@
+{
+ "player": "gemini-3.5-flash-lite",
+ "proposer": [
+  "gemini-3.8-flash",
+  "gemini-3.6-flash",
+  "gemini-3.5-flash-lite"
+ ],
+ "log": [
+  {
+   "round": 1,
+   "kind": "llm",
+   "note": "Check your inventory and gather sufficient materials before attempting to craft any items.",
+   "accepted": false,
+   "reason": "no significant held-out gain (mean +0.005, lower bound -0.020)",
+   "metrics": {
+    "gain": 0.005,
+    "gain_lower": -0.02
+   }
+  },
+  {
+   "round": 2,
+   "kind": "llm",
+   "note": "Check your inventory and gather sufficient materials before attempting to craft any items.",
+   "accepted": false,
+   "reason": "no significant held-out gain (mean +0.005, lower bound -0.020)",
+   "metrics": {
+    "gain": 0.005,
+    "gain_lower": -0.02
+   }
+  }
+ ],
+ "report": [
+  {
+   "stage": "baseline",
+   "version": "8b1f2e4f62",
+   "success": 1.0,
+   "mean_steps": 9.7,
+   "score": 0.515,
+   "tokens": 1711.0
+  },
+  {
+   "stage": "after round 1",
+   "version": "8b1f2e4f62",
+   "success": 1.0,
+   "mean_steps": 9.7,
+   "score": 0.515,
+   "tokens": 1711.0
+  },
+  {
+   "stage": "after round 2",
+   "version": "8b1f2e4f62",
+   "success": 1.0,
+   "mean_steps": 9.7,
+   "score": 0.515,
+   "tokens": 1711.0
+  }
+ ],
+ "lineage": [],
+ "rollbacks": 0
+}

@@ -1,0 +1,7 @@
+.env
+config.json
+quota_*.json
+*.sqlite
+*.sqlite-journal
+gatekeeper.zip
+__pycache__/

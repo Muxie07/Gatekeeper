@@ -1,0 +1,113 @@
+{
+ "model": "gemini-3.5-flash-lite",
+ "episodes": [
+  {
+   "seed": 500,
+   "task": "pickaxe",
+   "success": true,
+   "steps": 7,
+   "tokens": 1194,
+   "events": [
+    "slip"
+   ]
+  },
+  {
+   "seed": 501,
+   "task": "pickaxe",
+   "success": true,
+   "steps": 7,
+   "tokens": 1190,
+   "events": [
+    "slip"
+   ]
+  },
+  {
+   "seed": 502,
+   "task": "pickaxe",
+   "success": true,
+   "steps": 10,
+   "tokens": 1727,
+   "events": [
+    "slip",
+    "slip",
+    "no_materials",
+    "slip"
+   ]
+  },
+  {
+   "seed": 503,
+   "task": "sword",
+   "success": true,
+   "steps": 13,
+   "tokens": 2369,
+   "events": [
+    "zombie_wipe",
+    "slip",
+    "slip",
+    "no_materials"
+   ]
+  },
+  {
+   "seed": 504,
+   "task": "sword",
+   "success": true,
+   "steps": 13,
+   "tokens": 2300,
+   "events": [
+    "slip",
+    "no_pickaxe",
+    "no_materials",
+    "no_materials"
+   ]
+  },
+  {
+   "seed": 505,
+   "task": "sword",
+   "success": true,
+   "steps": 10,
+   "tokens": 1772,
+   "events": [
+    "no_materials"
+   ]
+  },
+  {
+   "seed": 506,
+   "task": "sword",
+   "success": true,
+   "steps": 10,
+   "tokens": 1772,
+   "events": [
+    "no_materials"
+   ]
+  },
+  {
+   "seed": 507,
+   "task": "sword",
+   "success": true,
+   "steps": 10,
+   "tokens": 1772,
+   "events": [
+    "no_materials"
+   ]
+  },
+  {
+   "seed": 508,
+   "task": "pickaxe",
+   "success": true,
+   "steps": 6,
+   "tokens": 1015,
+   "events": []
+  },
+  {
+   "seed": 509,
+   "task": "sword",
+   "success": true,
+   "steps": 11,
+   "tokens": 1999,
+   "events": [
+    "zombie_wipe",
+    "no_materials"
+   ]
+  }
+ ]
+}

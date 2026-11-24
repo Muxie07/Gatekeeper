@@ -1,0 +1,4 @@
+{"k": "6e8751b8f0a1a71216d5c72d4c3a9c4a4d5ac241bb5064f2f9f18a88b7393839", "text": "", "i": 235, "o": 0}
+{"k": "f98740187412b5098c22b05596cd645866f997ef8d1feb90b4e0490562d0782c", "text": "```json\n{\"lesson\": \"Check your inventory and gather sufficient materials before attempting to craft any items.\"}\n```", "i": 235, "o": 24}
+{"k": "8a560406ff296d5ad409b9cc0382364f407d7c8643f1ff03da886eb3723c8abb", "text": "```json\n{\"lesson\": \"Craft a sword early to defeat zombies before they steal your collected resources.\"}\n```", "i": 281, "o": 24}
+{"k": "10069f795a720e7d4976dd517d9d51f2ca873e72dd693b15a6cac2e4ed608861", "text": "```json\n{\"lesson\": \"Ensure you have the required materials in your inventory before crafting to avoid wasted actions.\"}\n```", "i": 292, "o": 26}
