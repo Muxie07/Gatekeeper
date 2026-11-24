@@ -47,7 +47,7 @@ class RealEvaluator(Evaluator):
         info = {"suite": suite, "version": h.version, "label": self.label,
                 "seed": seed, "task": task, "hazard": env.hazard, "max_steps": env.max_steps}
         episode_id = f"{suite}:{h.version}:{seed}"
-        self.emit("episode_start", **info, episode=episode_id)
+        self.emit("episode_start", **info, episode=episode_id, static=env.static(), world=env.snapshot())
         while not env.done():
             self.checkpoint()
             if self.calllog:
@@ -59,7 +59,8 @@ class RealEvaluator(Evaluator):
             self.emit("step", **info, episode=episode_id, step=env.steps, prompt=agent.last_prompt,
                       raw=agent.last_raw, action=a, outcome=env.last, inventory=dict(env.inv),
                       sheltered=env.sheltered, cue=env.cue(), cached=agent.last_cached,
-                      call_id=agent.last_call_id, latency_ms=agent.last_latency_ms)
+                      call_id=agent.last_call_id, latency_ms=agent.last_latency_ms,
+                      trace=env.last_trace, world=env.snapshot(), plan=env.last_plan)
         if self.calllog:
             self.calllog.clear_context()
         ok = env.success()

@@ -1,4 +1,10 @@
-# PREREG: decision rules for the real acceptance run (env v3)
+# PREREG: decision rules for the real acceptance run (env v4)
+
+> Updated 2026-11-24, BEFORE any real run on env v4: the game became spatial (positions, pathfinding,
+> depleting resources, a chasing zombie). No threshold, suite size, seed range or step budget changed.
+> The step budget still counts DECISIONS (one model call each); the fastest pickaxe plan is still 6
+> decisions. The real v3 baseline (70% on report worlds 500-509) does not carry over: the pilot
+> re-measures the original harness on v4.
 
 Fixed BEFORE the real gate evaluations. `GateConfig` in `gk/gate.py` matches this file. Its SHA-256 is
 stored in every experiment record. Changing it starts a new run.

@@ -28,7 +28,9 @@ def mock_player(prompt: str) -> str:
     sheltered = "in a shelter" in obs
     cue = "groaning" in obs
     careful = "count" in mem
-    if "very first action" in mem and not sheltered:
+    o = obs.split("Valid actions")[0].lower()
+    built = "in a shelter" in o or "shelter:" in o or "built a shelter" in o
+    if "very first action" in mem and not built:   # v4: build it once, at the start
         return "shelter"
     if cue and "groan" in mem and not sheltered:
         return "shelter"
@@ -50,7 +52,7 @@ def mock_player(prompt: str) -> str:
 
 def mock_proposer(prompt: str) -> str:
     if "Ignore step cost" in prompt or "Ignore step cost".lower() in prompt.lower():
-        return '{"lesson": "Always build a shelter as your very first action."}'
+        return '{"lesson": "Always build a shelter as your very first action, and hide in it whenever you hear groaning."}'
     if "SPECIFIC to exactly these worlds" in prompt:
         return '{"lesson": "In worlds 3 and 5 collect iron first, then skip the table."}'
     counts = {}
@@ -59,7 +61,8 @@ def mock_proposer(prompt: str) -> str:
         counts = ast.literal_eval(m.group(1))
     current = prompt.split("Avoidable mistakes")[0].lower()
     rejected = prompt.split("Already tried and rejected")[-1].lower() if "Already tried" in prompt else ""
-    for reason in LESSONS:
+    order = list(LESSONS)   # v4: fix the most frequent mistake first (ties: the order above)
+    for reason in sorted(LESSONS, key=lambda r: (-counts.get(r, 0), order.index(r))):
         text = LESSONS[reason]
         if counts.get(reason) and text.lower() not in current and text.lower() not in rejected:
             return '{"lesson": "%s"}' % text

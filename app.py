@@ -39,7 +39,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 MAX_ROUNDS = 6      # server-side cap, whatever the page asks for
 MAX_EVENTS = 20000  # in-memory event log (events.jsonl and experiments.jsonl are the permanent records)
 HUMAN_BASE = 800000  # human-played worlds: never used by any suite, never sent to a model
-DEMO_MOCK_PACE = 0.9  # seconds per step for a MOCK demo game, so it can be watched
+DEMO_MOCK_PACE = 1.6  # seconds per decision for a MOCK demo game, so the walk can be watched
 DEMO_BASE = 900000  # demo worlds: seeds 900000+counter, never used by any suite, so never cached
 LOCAL_HOSTS = ("localhost", "127.0.0.1", "[::1]")
 
@@ -275,7 +275,9 @@ class Runner:
                 "seed": env.seed, "task": env.task, "hazard": env.hazard, "max_steps": env.max_steps,
                 "step": env.steps, "action": action, "raw": action, "outcome": env.last,
                 "inventory": dict(env.inv), "sheltered": env.sheltered, "cue": env.cue(),
-                "done": env.done(), "success": env.success(), "mistakes": list(env.events)}
+                "done": env.done(), "success": env.success(), "mistakes": list(env.events),
+                "episode": f"human:{env.seed}", "trace": env.last_trace if action else [],
+                "world": env.snapshot(), "static": env.static(), "plan": env.last_plan}
 
     # ---- snapshot -----------------------------------------------------------------------
     def snapshot(self) -> dict:

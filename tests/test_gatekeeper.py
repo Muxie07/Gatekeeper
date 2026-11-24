@@ -7,7 +7,7 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from gk.agent import LLMAgent
-from gk.env import MiniCraft
+from gk.env_v3 import MiniCraft  # the scripted simulation runs on the legacy v3 rules
 from gk.evaluator import Evaluator
 from gk.gate import Gate
 from gk.harness import Harness, add_lessons

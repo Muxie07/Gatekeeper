@@ -13,7 +13,7 @@ import urllib.request
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import app as appmod
-from gk.env import MiniCraft
+from gk.env_v3 import MiniCraft  # these EnvV3 tests cover the legacy v3 rules
 from gk.harness import DEFAULT_FILES, Harness, add_lessons, placebo
 from gk.lab import Lab, Stopped, resume_hint, round_budget
 from gk.mock import mock_player, mock_proposer
@@ -108,14 +108,16 @@ class LabLoop(unittest.TestCase):
             self.assertFalse(o.accepted)
             self.assertEqual(o.kind, "overfit")
 
-    def test_regression_check_rejects_a_lesson_that_helps_held_out_but_wastes_steps(self):
+    def test_shelter_first_lesson_is_rejected_and_really_costs_the_old_skill(self):
+        # v4 physics: "build a shelter first and hide when you hear groaning" stops zombie attacks
+        # but wastes a decision in every world. The gate must not accept it, and its old-skill
+        # (regression suite) score must really be lower. (Which check stops it first depends on
+        # the measured numbers; under v3 it was the regression check, under v4 the held-out test.)
         with tempfile.TemporaryDirectory() as d:
             lab, _ = make_lab(d)
             o = lab.run_side("adversarial")[0]     # judged against the ORIGINAL harness
-            self.assertFalse(o.accepted)
-            self.assertTrue(o.reason.startswith("regression"), o.reason)
-            held = next(c for c in o.checks if c["name"] == "held-out gain")
-            self.assertTrue(held["pass"])          # it genuinely looked good on hazard worlds
+            self.assertFalse(o.accepted, o.reason)
+            self.assertGreater(lab.gate.regression_drop(lab.original, o.child), lab.gate.cfg.regression_tol)
             self.assertEqual(lab.current.version, lab.original.version)   # lineage untouched
 
     def test_rollback_of_an_accepted_version_that_regresses_on_fresh_worlds(self):

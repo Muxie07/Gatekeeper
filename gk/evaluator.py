@@ -7,7 +7,7 @@ import random
 from dataclasses import dataclass
 
 from .agent import SimAgent
-from .env import MiniCraft
+from .env_v3 import MiniCraft  # the scripted simulation keeps the v3 rules
 from .harness import Harness
 
 # (seeds, probability a task is "sword"). Suites never overlap.
