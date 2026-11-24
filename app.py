@@ -353,7 +353,7 @@ def _live_provider(stack):
     return LoggedProvider(limited, stack.calllog, "player") if stack.calllog else limited
 
 
-KEY_NAMES = {"gemini": "GEMINI_API_KEY", "anthropic": "ANTHROPIC_API_KEY"}
+KEY_NAMES = {"gemini": "GEMINI_API_KEY", "anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY"}
 
 
 def key_name(config_path: str = "config.json") -> str:

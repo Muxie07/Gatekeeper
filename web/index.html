@@ -321,7 +321,7 @@ function tagFor(S){if(!S)return el("span","mut","–");if(S.mode==="human")retur
 function showSide(S,ev,phase){
   const w=$("gWho");w.textContent="";const st=$("gStory");st.textContent="";if(!S){w.textContent="nothing yet";return}
   w.appendChild(tagFor(Object.assign({},S,ev?{cached:ev.cached,latency_ms:ev.latency_ms,step:ev.step}:{})));
-  w.appendChild(document.createTextNode(" "+[S.mode==="real"?gkModelName(S.model)+" (real model"+(String(S.model||"").startsWith("claude")?", paid":"")+")":S.mode==="mock"?"mock agent (simulated, no model)":S.mode==="human"?"you":"?",
+  w.appendChild(document.createTextNode(" "+[S.mode==="real"?gkModelName(S.model)+" (real model"+(/^(claude|gpt)/.test(String(S.model||""))?", paid":"")+")":S.mode==="mock"?"mock agent (simulated, no model)":S.mode==="human"?"you":"?",
     S.mode==="human"?"":"harness "+S.version,S.label,(S.suite||"")+" world "+S.seed].filter(Boolean).join(" · ")));
   const row=(k,v,cls)=>{st.appendChild(el("b","",k));st.appendChild(el("div",cls||"",v))};
   row("Objective",`craft a ${S.task}`+(S.success?" — done":""));

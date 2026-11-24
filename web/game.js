@@ -89,7 +89,8 @@
   function modelName(model) {   // the model recorded in the backend event, in plain words
     const m = String(model || "");
     if (m.startsWith("claude-haiku")) return "Claude Haiku"; if (m.startsWith("claude")) return "Claude";
-    if (m.startsWith("gemini")) return "Gemini"; return m || "AI model";
+    if (m.startsWith("gemini")) return "Gemini"; if (m.startsWith("gpt-6-luna")) return "GPT-6 Luna";
+    if (m.startsWith("gpt")) return "GPT"; return m || "AI model";
   }
   function modeInfo(mode, ctx, cached, latency, model) {
     let m;

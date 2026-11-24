@@ -169,6 +169,59 @@ class AnthropicProvider(Provider):
                           model_version=str(data.get("model", "")), response_id=str(data.get("id", "")))
 
 
+class OpenAIProvider(Provider):
+    """OpenAI Responses API over plain HTTPS (no SDK). PAID: always wrapped in a SpendProvider.
+    Reasoning is switched OFF ("effort": "none"): thinking tokens are billed as output and the player
+    only has to pick one of seven actions."""
+    name = "openai"
+    URL = "https://api.openai.com/v1/responses"
+
+    def __init__(self, model: str, api_key: str | None = None, timeout: int = 60,
+                 opener=urllib.request.urlopen, reasoning: str = "none"):
+        self.model, self.timeout, self.opener, self.reasoning = model, timeout, opener, reasoning
+        load_dotenv()
+        self.api_key = api_key or os.environ.get("OPENAI_API_KEY", "")
+
+    def complete(self, prompt, system="", max_tokens=256):
+        if not self.api_key:
+            raise RuntimeError("No OpenAI API key found. Paste it into the .env file after "
+                               "OPENAI_API_KEY= (never commit that file).")
+        body = {"model": self.model, "input": prompt, "max_output_tokens": max(16, max_tokens),
+                "reasoning": {"effort": self.reasoning}, "store": False}
+        if system:
+            body["instructions"] = system
+        req = urllib.request.Request(
+            self.URL, data=json.dumps(body).encode(),
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {self.api_key}"})
+        t0 = time.time()
+        try:
+            with self.opener(req, timeout=self.timeout) as r:
+                status = getattr(r, "status", None)
+                data = json.load(r)
+        except urllib.error.HTTPError as e:
+            try:
+                detail = e.read().decode("utf-8", "replace")[:300]
+            except Exception:
+                detail = ""
+            low = detail.lower()
+            if "insufficient_quota" in low or "credit_balance" in low or "billing" in low:
+                raise QuotaExhausted("OpenAI credit balance used up; add credits in the API billing page") from e
+            if e.code == 429:
+                raise RateLimitError(f"HTTP 429 {detail}") from e
+            if e.code in (500, 502, 503, 504):
+                raise TransientError(f"HTTP {e.code} from provider (temporary)") from e
+            raise RuntimeError(f"OpenAI API HTTP {e.code}: {detail}") from e
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
+            raise TransientError(f"network problem: {e}") from e
+        text = "".join(c.get("text", "") for item in data.get("output", []) if item.get("type") == "message"
+                       for c in item.get("content", []) if c.get("type") == "output_text")
+        u = data.get("usage", {})
+        return Completion(text, u.get("input_tokens", 0), u.get("output_tokens", 0),   # output includes any reasoning
+                          latency_ms=int((time.time() - t0) * 1000),
+                          http_status=status if isinstance(status, int) else 200,
+                          model_version=str(data.get("model", "")), response_id=str(data.get("id", "")))
+
+
 class RateLimiter:
     """Enforces requests/minute and requests/day (day resets at midnight Pacific).
     Counts are persisted so a restart cannot overspend the daily quota."""
@@ -347,7 +400,10 @@ class MeteredProvider(Provider):
 # ---- money: only for paid providers ---------------------------------------------------------
 # List prices, USD per million tokens (platform.claude.com/docs/en/about-claude/pricing, 2026-11-24).
 PRICES_USD_PER_MTOK = {"claude-haiku-5-5": {"in": 0.10, "out": 0.50, "in_long": 0.50, "out_long": 2.50,
-                                            "long_from": 100_000}}
+                                            "long_from": 100_000},
+                       # standard (not batch) rate, developers.openai.com, checked 2026-11-24
+                       "gpt-6-luna": {"in": 0.10, "out": 0.50, "in_long": 0.10, "out_long": 0.50,
+                                      "long_from": 10**12}}
 
 
 def call_cost_usd(model: str, tokens_in: int, tokens_out: int) -> float:
@@ -424,7 +480,7 @@ DEFAULT_ALLOWED = ("gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-3.6-flas
 
 
 MAX_SPEND_INR = 0          # free providers (Gemini): the cap is Rs 0, always
-PAID_PROVIDERS = {"anthropic": ("claude-haiku-5-5",)}   # the only paid models the user has approved
+PAID_PROVIDERS = {"anthropic": ("claude-haiku-5-5",), "openai": ("gpt-6-luna",)}   # approved paid models
 PAID_CEILING_INR = 300     # the user's limit; going above it needs a code change AND explicit permission
 DEFAULT_USD_INR = 95.0     # approx. mid-market rate on 2026-11-24; config "usd_inr" can update it
 
@@ -480,12 +536,13 @@ def build_provider(cfg: dict, workdir: str = ".", ledger: "Ledger | None" = None
             raise ValueError(f"model {cfg['model']!r} is not on the free-tier allowlist {list(allowed)}; "
                              "refusing to call it (could bill).")
         inner: Provider = GeminiProvider(cfg["model"])
-    elif kind == "anthropic":
+    elif kind in PAID_PROVIDERS:
         check_spend_cap(cfg)
         allowed = allowlist_for(cfg)
         if cfg["model"] not in allowed:
             raise ValueError(f"model {cfg['model']!r} is not approved for paid use {list(allowed)}; refusing.")
-        inner = AnthropicProvider(cfg["model"])
+        inner = (AnthropicProvider(cfg["model"]) if kind == "anthropic"
+                 else OpenAIProvider(cfg["model"], reasoning=cfg.get("reasoning", "none")))
     elif kind == "mock":
         inner = MockProvider(lambda p: "collect wood", cfg.get("model", "mock"))
     else:

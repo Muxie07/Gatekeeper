@@ -50,7 +50,7 @@ class Stack:
                    control=control, calllog=self.calllog)
 
     def badge(self) -> str:
-        return (f"REAL · {self.player_model}" + (" · PAID" if self.player_model.startswith("claude") else " · free tier")
+        return (f"REAL · {self.player_model}" + (" · PAID" if self.player_model.startswith(("claude", "gpt")) else " · free tier")
                 if self.mode == "real"
                 else "MOCK / SIMULATED · no model was called")
 
@@ -86,7 +86,7 @@ class Stack:
 
 
 def _provider_of(model: str) -> str:
-    return "anthropic" if model.startswith("claude") else "gemini"
+    return "anthropic" if model.startswith("claude") else "openai" if model.startswith("gpt") else "gemini"
 
 
 def _limiter_count(workdir: str, model: str) -> int:
