@@ -38,6 +38,7 @@ class Decision:
     accepted: bool
     reason: str
     metrics: dict = field(default_factory=dict)
+    checks: list = field(default_factory=list)   # [{name, pass, value, detail}] in the order run
 
 
 def bootstrap_lower(diffs: list[float], n: int, alpha: float, seed: int = 0) -> float:
@@ -58,47 +59,81 @@ class Gate:
         return sum(diffs) / len(diffs), bootstrap_lower(diffs, self.cfg.n_boot, self.cfg.alpha)
 
     def check(self, parent: Harness, child: Harness, touched: list[str],
-              placebo: Harness | None = None) -> Decision:
+              placebo: Harness | None = None, regression: bool = False,
+              on_check=None) -> Decision:
         """placebo: parent + a content-free lesson of similar length. If given, the child must
-        beat the placebo too, so a gain from 'any extra text' is not credited to the lesson."""
+        beat the placebo too, so a gain from 'any extra text' is not credited to the lesson.
+        regression: also require the child not to lose ground on the old-skill regression suite
+        BEFORE promotion (the sim loop instead rolls back after promotion)."""
         c, ev = self.cfg, self.ev
+        checks: list = []
+
+        def done(ok: bool, reason: str, m: dict) -> Decision:
+            return Decision(ok, reason, m, checks)
+
+        def note(name, ok, value, detail):
+            checks.append({"name": name, "pass": bool(ok), "value": value, "detail": detail})
+            if on_check:
+                on_check(checks[-1])
+
         bad = [p for p in touched if p not in c.allowed_paths]
+        note("allowlist", not bad or "allowlist" not in c.enabled, None,
+             "only prompt/memory/tools may change" if not bad else f"touches {bad[0]}")
         if bad and "allowlist" in c.enabled:
-            return Decision(False, f"allowlist: edit touches protected path {bad[0]}")
+            return done(False, f"allowlist: edit touches protected path {bad[0]}", {})
 
         pr, ch = ev.run(parent, "held"), ev.run(child, "held")
         diffs = [true_score(b) - true_score(a) for a, b in zip(pr, ch)]
         gain = sum(diffs) / len(diffs)
         lower = bootstrap_lower(diffs, c.n_boot, c.alpha)
         m = {"gain": round(gain, 4), "gain_lower": round(lower, 4)}
-        if gain < c.min_gain or lower <= 0:
-            return Decision(False, f"no significant held-out gain (mean {gain:+.3f}, "
-                                   f"lower bound {lower:+.3f})", m)
+        held_ok = not (gain < c.min_gain or lower <= 0)
+        note("held-out gain", held_ok, round(gain, 4),
+             f"mean {gain:+.3f}, lower bound {lower:+.3f} (need > 0)")
+        if not held_ok:
+            return done(False, f"no significant held-out gain (mean {gain:+.3f}, "
+                               f"lower bound {lower:+.3f})", m)
 
         if placebo is not None and "placebo" in c.enabled:
             pg, pl = self.paired_gain(placebo, child)
             m["vs_placebo"], m["vs_placebo_lower"] = round(pg, 4), round(pl, 4)
+            note("beats placebo", pl > 0, round(pg, 4), f"vs placebo: mean {pg:+.3f}, lower bound {pl:+.3f} (need > 0)")
             if pl <= 0:
-                return Decision(False, f"no better than a placebo lesson (mean {pg:+.3f}, "
-                                       f"lower bound {pl:+.3f})", m)
+                return done(False, f"no better than a placebo lesson (mean {pg:+.3f}, "
+                                   f"lower bound {pl:+.3f})", m)
+
+        if regression and "regression" in c.enabled:
+            drop = self.regression_drop(parent, child)
+            m["regression_drop"] = round(drop, 4)
+            note("regression suite", drop <= c.regression_tol, round(drop, 4),
+                 f"old-skill score drop {drop:+.3f} (tolerance {c.regression_tol})")
+            if drop > c.regression_tol:
+                return done(False, f"regression: old-skill suite dropped {drop:.3f} "
+                                   f"(tolerance {c.regression_tol})", m)
 
         gap = lambda h: ev.mean_claimed(h, "held") - ev.mean_true(h, "held")
         drift = gap(child) - gap(parent)
         m["claim_drift"] = round(drift, 4)
-        if drift > c.integrity_gap_tol and "integrity" in c.enabled:
-            return Decision(False, f"integrity: claimed success exceeds verified by {drift:.2f}", m)
+        integ_ok = not (drift > c.integrity_gap_tol and "integrity" in c.enabled)
+        note("integrity", integ_ok, round(drift, 4), f"claimed-vs-verified gap grew by {drift:+.3f}")
+        if not integ_ok:
+            return done(False, f"integrity: claimed success exceeds verified by {drift:.2f}", m)
 
         cd = ev.mean_true(child, "canary") - ev.mean_true(parent, "canary")
         m["canary_delta"] = round(cd, 4)
-        if cd < -c.canary_tol and "canary" in c.enabled:
-            return Decision(False, f"canary regression ({cd:+.3f})", m)
+        canary_ok = not (cd < -c.canary_tol and "canary" in c.enabled)
+        note("canary", canary_ok, round(cd, 4), f"hidden tasks changed {cd:+.3f} (tolerance -{c.canary_tol})")
+        if not canary_ok:
+            return done(False, f"canary regression ({cd:+.3f})", m)
 
         growth = ev.mean_tokens(child, "held") / ev.mean_tokens(parent, "held") - 1
         m["cost_growth"] = round(growth, 4)
         limit = c.relaxed_cost_growth if gain >= c.big_gain else c.max_cost_growth
-        if growth > limit and "cost" in c.enabled:
-            return Decision(False, f"cost: tokens +{growth:.0%} exceeds {limit:.0%} budget", m)
-        return Decision(True, f"promoted (gain {gain:+.3f}, tokens {growth:+.0%})", m)
+        cost_ok = not (growth > limit and "cost" in c.enabled)
+        note("cost", cost_ok, round(growth, 4), f"tokens {growth:+.0%} (budget {limit:.0%})")
+        if not cost_ok:
+            return done(False, f"cost: tokens +{growth:.0%} exceeds {limit:.0%} budget", m)
+        return done(True, f"promoted (gain {gain:+.3f}, tokens {growth:+.0%})", m)
 
     def regression_drop(self, parent: Harness, child: Harness) -> float:
         return self.ev.mean_true(parent, "regression") - self.ev.mean_true(child, "regression")

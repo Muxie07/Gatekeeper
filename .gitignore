@@ -5,3 +5,6 @@ quota_*.json
 *.sqlite-journal
 gatekeeper.zip
 __pycache__/
+
+experiments.mock.jsonl
+acceptance_simulated/

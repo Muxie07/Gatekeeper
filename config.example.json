@@ -1,6 +1,13 @@
-{
+﻿{
   "provider": "gemini",
   "model": "gemini-3.5-flash-lite",
   "rpm": 15,
-  "rpd": 500
+  "rpd": 500,
+  "tpd": 0,
+  "allowed_models": ["gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-3.6-flash"],
+  "proposer": {"models": [
+    {"model": "gemini-3.8-flash", "rpm": 5, "rpd": 20},
+    {"model": "gemini-3.6-flash", "rpm": 5, "rpd": 20},
+    {"model": "gemini-3.5-flash-lite", "rpm": 15, "rpd": 500}
+  ]}
 }

@@ -63,6 +63,8 @@ class LLMAgent:
     def __init__(self, harness: Harness, provider):
         self.harness, self.provider = harness, provider
         self.tokens = 0
+        self.last_prompt = self.last_raw = ""   # exposed for live displays
+        self.last_cached = False
 
     def prompt(self, env: MiniCraft) -> str:
         mem = self.harness.memory_text() or "(none yet)"
@@ -71,8 +73,10 @@ class LLMAgent:
                 "Reply with exactly one valid action and nothing else.")
 
     def act(self, env: MiniCraft) -> str:
-        c = self.provider.complete(self.prompt(env), system=self.harness.files["prompt.md"],
+        self.last_prompt = self.prompt(env)
+        c = self.provider.complete(self.last_prompt, system=self.harness.files["prompt.md"],
                                    max_tokens=16)
+        self.last_raw, self.last_cached = c.text, c.cached
         self.tokens += c.tokens_in + c.tokens_out
         text = c.text.strip().lower()
         for a in sorted(ACTIONS, key=len, reverse=True):

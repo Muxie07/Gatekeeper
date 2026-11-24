@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import sqlite3
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -28,6 +29,7 @@ class Completion:
     tokens_in: int
     tokens_out: int
     cached: bool = False
+    model: str = ""      # which model produced the text (filled in by CachedProvider)
 
 
 class RateLimitError(Exception):
@@ -150,7 +152,9 @@ class LimitedProvider(Provider):
             self.limiter.acquire()  # failed attempts count too: assume the worst
             try:
                 return self.inner.complete(prompt, system, max_tokens)
-            except (RateLimitError, TransientError):
+            except RateLimitError:
+                raise   # HTTP 429: stop and let the caller report when to resume; no retry loop
+            except TransientError:
                 if attempt == self.retries:
                     raise
                 self.sleep(2 ** attempt * 5)
@@ -202,9 +206,10 @@ class CachedProvider(Provider):
         d = self.store.get(k)
         if d:
             self.hits += 1
-            return Completion(d["text"], d["i"], d["o"], cached=True)
+            return Completion(d["text"], d["i"], d["o"], cached=True, model=self.model)
         self.misses += 1
         c = self.inner.complete(prompt, system, max_tokens)
+        c.model = self.model
         d = {"k": k, "text": c.text, "i": c.tokens_in, "o": c.tokens_out}
         self.store[k] = d
         with open(self.path, "a", encoding="utf-8") as f:
@@ -212,15 +217,82 @@ class CachedProvider(Provider):
         return c
 
 
-def build_provider(cfg: dict, workdir: str = ".") -> Provider:
-    """cfg example: {"provider":"gemini","model":"gemini-3.5-flash-lite","rpm":15,"rpd":500}"""
+class Ledger:
+    """Persistent per-day, per-model count of REAL requests (cache hits never reach it) and
+    tokens. Proves free-tier limits were respected; also enforces an optional tokens/day cap."""
+
+    def __init__(self, path: str, clock=time.time):
+        self.path, self.clock = path, clock
+        self.lock = threading.Lock()
+
+    def day(self) -> str:
+        return datetime.fromtimestamp(self.clock(), ZoneInfo("America/Los_Angeles")).strftime("%Y-%m-%d")
+
+    def _load(self) -> dict:
+        try:
+            with open(self.path, encoding="utf-8") as f:
+                return json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return {}
+
+    def record(self, model: str, tokens: int = 0) -> None:
+        with self.lock:
+            d = self._load()
+            row = d.setdefault(self.day(), {}).setdefault(model, {"requests": 0, "tokens": 0})
+            row["requests"] += 1
+            row["tokens"] += tokens
+            with open(self.path, "w", encoding="utf-8") as f:
+                json.dump(d, f, indent=1)
+
+    def today(self, model: str) -> dict:
+        return self._load().get(self.day(), {}).get(model, {"requests": 0, "tokens": 0})
+
+    def total_today(self) -> int:
+        return sum(r["requests"] for r in self._load().get(self.day(), {}).values())
+
+    def all(self) -> dict:
+        return self._load()
+
+
+class MeteredProvider(Provider):
+    """Counts every real API attempt in the Ledger and refuses once tokens/day is used up."""
+
+    def __init__(self, inner: Provider, ledger: Ledger, tpd: int = 0):
+        self.inner, self.ledger, self.tpd = inner, ledger, tpd
+        self.name, self.model = inner.name, inner.model
+
+    def complete(self, prompt, system="", max_tokens=256):
+        if self.tpd and self.ledger.today(self.model)["tokens"] >= self.tpd:
+            raise QuotaExhausted(f"{self.tpd} tokens/day used for {self.model}; resets midnight Pacific.")
+        try:
+            c = self.inner.complete(prompt, system, max_tokens)
+        except Exception:
+            self.ledger.record(self.model, 0)   # a failed attempt still counts as a request
+            raise
+        self.ledger.record(self.model, c.tokens_in + c.tokens_out)
+        return c
+
+
+# Free-tier models only (AI Studio table). Anything else is refused: no accidental paid model.
+DEFAULT_ALLOWED = ("gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-3.6-flash")
+
+
+def build_provider(cfg: dict, workdir: str = ".", ledger: "Ledger | None" = None) -> Provider:
+    """cfg example: {"provider":"gemini","model":"gemini-3.5-flash-lite","rpm":15,"rpd":500}
+    Optional: "tpd" (tokens/day cap), "allowed_models" (replaces the free-tier allowlist)."""
     kind = cfg["provider"]
     if kind == "gemini":
+        allowed = cfg.get("allowed_models") or DEFAULT_ALLOWED
+        if cfg["model"] not in allowed:
+            raise ValueError(f"model {cfg['model']!r} is not on the free-tier allowlist {list(allowed)}; "
+                             "refusing to call it (could bill).")
         inner: Provider = GeminiProvider(cfg["model"])
     elif kind == "mock":
         inner = MockProvider(lambda p: "collect wood", cfg.get("model", "mock"))
     else:
         raise ValueError(f"unknown provider {kind!r}; add an adapter in providers.py")
+    if ledger is not None:
+        inner = MeteredProvider(inner, ledger, cfg.get("tpd", 0))
     limiter = RateLimiter(cfg.get("rpm", 15), cfg.get("rpd", 500),
                           os.path.join(workdir, f"quota_{kind}_{cfg['model']}.json"))
     return CachedProvider(LimitedProvider(inner, limiter),

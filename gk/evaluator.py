@@ -36,8 +36,19 @@ def task_for(seed: int, p_sword: float) -> str:
     return "sword" if random.Random(seed * 31 + 5).random() < p_sword else "pickaxe"
 
 
-def run_episode(h: Harness, seed: int, task: str) -> Episode:
-    env, agent = MiniCraft(seed, task), SimAgent(h, seed)
+def suite_opts(entry: tuple) -> tuple:
+    """A suite entry is (seeds, p_sword[, max_steps[, hazard_p]]). Returns (seeds, p, opts)."""
+    seeds, p, *rest = entry
+    opts = {}
+    if len(rest) > 0 and rest[0] is not None:
+        opts["max_steps"] = rest[0]
+    if len(rest) > 1 and rest[1] is not None:
+        opts["hazard_p"] = rest[1]
+    return seeds, p, opts
+
+
+def run_episode(h: Harness, seed: int, task: str, **opts) -> Episode:
+    env, agent = MiniCraft(seed, task, **opts), SimAgent(h, seed)
     claimed = False
     while not env.done():
         a = agent.act(env)
@@ -65,16 +76,25 @@ class Evaluator:
         self.offset = offset  # shifts every suite's seeds: different worlds per trial
         self.suites = suites or SUITES
         self._cache: dict = {}
+        self.context: dict = {}      # what is being evaluated right now (for live displays)
+        self.on_suite = None         # optional callback(event, **info) for live displays
 
-    def episode(self, h: Harness, seed: int, task: str) -> Episode:
-        return run_episode(h, seed, task)   # overridden by the real-model evaluator
+    def episode(self, h: Harness, seed: int, task: str, **opts) -> Episode:
+        return run_episode(h, seed, task, **opts)   # overridden by the real-model evaluator
 
     def run(self, h: Harness, suite: str) -> list[Episode]:
         key = (h.version, suite)
         if key not in self._cache:
-            seeds, p = self.suites[suite]
-            self._cache[key] = [self.episode(h, s + self.offset, task_for(s + self.offset, p))
+            seeds, p, opts = suite_opts(self.suites[suite])
+            self.context = {"suite": suite, "version": h.version}
+            if self.on_suite:
+                self.on_suite("suite_start", suite=suite, version=h.version, n=len(list(seeds)))
+            self._cache[key] = [self.episode(h, s + self.offset, task_for(s + self.offset, p), **opts)
                                 for s in seeds]
+            if self.on_suite:
+                self.on_suite("suite_end", suite=suite, version=h.version, episodes=self._cache[key])
+        elif self.on_suite:
+            self.on_suite("suite_cached", suite=suite, version=h.version, episodes=self._cache[key])
         return self._cache[key]
 
     def mean_true(self, h, suite):

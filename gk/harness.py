@@ -12,11 +12,10 @@ from dataclasses import dataclass
 from .env import ACTIONS
 
 DEFAULT_FILES = {
-    "prompt.md": ("You are a crafting agent. Craft the goal item in as few steps as possible. "
-                  "Rules: a table costs 2 wood. A pickaxe costs 1 wood + 1 stone and needs a table. "
-                  "A sword costs 1 wood + 1 iron and needs a table. Collecting iron needs a "
-                  "pickaxe. Each action, including a failed one, uses one step. If an action "
-                  "failed, do not repeat it unchanged."),
+    # env v3: no recipes here. The agent discovers requirements from the game's failure feedback.
+    "prompt.md": ("You are a crafting agent in a small survival game. Craft the goal item in as "
+                  "few steps as possible. Each action, including a failed one, uses one step. "
+                  "Read the feedback after every action."),
     "memory.json": "[]",
     "tools.json": json.dumps(ACTIONS),
 }

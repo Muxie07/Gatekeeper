@@ -148,21 +148,47 @@ class ProviderTests(unittest.TestCase):
             lim.acquire(); lim.acquire(); lim.acquire()
             self.assertTrue(slept)
 
-    def test_429_retries_then_succeeds(self):
+    def test_429_stops_without_a_retry_loop_and_transient_errors_retry(self):
         with tempfile.TemporaryDirectory() as d:
             calls = {"n": 0}
 
-            class Flaky(MockProvider):
+            class Throttled(MockProvider):
                 def complete(self, prompt, system="", max_tokens=256):
                     calls["n"] += 1
-                    if calls["n"] < 3:
-                        raise RateLimitError("429")
-                    return super().complete(prompt, system, max_tokens)
+                    raise RateLimitError("429")
 
             lim = RateLimiter(100, 100, os.path.join(d, "q.json"), sleep=lambda s: None)
-            lp = LimitedProvider(Flaky(lambda p: "ok"), lim, sleep=lambda s: None)
-            self.assertEqual(lp.complete("x").text, "ok")
-            self.assertEqual(lim.used_today(), 3)  # failed tries count against quota
+            lp = LimitedProvider(Throttled(lambda p: "ok"), lim, sleep=lambda s: None)
+            with self.assertRaises(RateLimitError):
+                lp.complete("x")
+            self.assertEqual(calls["n"], 1)         # exactly one attempt, no retry loop
+            self.assertEqual(lim.used_today(), 1)   # and it counted against quota
+
+            n = {"k": 0}
+
+            class Flaky(MockProvider):
+                def complete(self, prompt, system="", max_tokens=256):
+                    n["k"] += 1
+                    if n["k"] < 3:
+                        raise TransientError("503")
+                    return super().complete(prompt, system, max_tokens)
+            lp2 = LimitedProvider(Flaky(lambda p: "ok"), lim, sleep=lambda s: None)
+            self.assertEqual(lp2.complete("x").text, "ok")
+
+    def test_allowlist_refuses_unlisted_model_and_ledger_counts_real_calls(self):
+        from gk.providers import Ledger, MeteredProvider
+        with tempfile.TemporaryDirectory() as d:
+            with self.assertRaises(ValueError):
+                build_provider({"provider": "gemini", "model": "gemini-9-ultra-paid"}, d)
+            led = Ledger(os.path.join(d, "led.json"))
+            inner = MockProvider(lambda p: "abcd" * 10, "free-model")
+            cp = CachedProvider(MeteredProvider(inner, led), os.path.join(d, "c.jsonl"))
+            cp.complete("hello")
+            cp.complete("hello")   # cache hit: must not count
+            self.assertEqual(led.today("free-model")["requests"], 1)
+            capped = MeteredProvider(inner, led, tpd=1)
+            with self.assertRaises(QuotaExhausted):
+                capped.complete("again")
 
     def test_gemini_adapter_with_fake_transport(self):
         class Resp:
