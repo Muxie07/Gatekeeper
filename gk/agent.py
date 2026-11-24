@@ -65,6 +65,9 @@ class LLMAgent:
         self.tokens = 0
         self.last_prompt = self.last_raw = ""   # exposed for live displays
         self.last_cached = False
+        self.last_call_id = ""
+        self.last_latency_ms = 0
+        self.call_ids: list = []
 
     def prompt(self, env: MiniCraft) -> str:
         mem = self.harness.memory_text() or "(none yet)"
@@ -77,6 +80,9 @@ class LLMAgent:
         c = self.provider.complete(self.last_prompt, system=self.harness.files["prompt.md"],
                                    max_tokens=16)
         self.last_raw, self.last_cached = c.text, c.cached
+        self.last_call_id, self.last_latency_ms = c.call_id, c.latency_ms
+        if c.call_id:
+            self.call_ids.append(c.call_id)
         self.tokens += c.tokens_in + c.tokens_out
         text = c.text.strip().lower()
         for a in sorted(ACTIONS, key=len, reverse=True):

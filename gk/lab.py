@@ -17,8 +17,9 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
+from .chain import GENESIS, code_sha, prereg_sha, record_hash
 from .env import ENV_VERSION, MAX_STEPS
-from .evaluator import suite_opts, true_score
+from .evaluator import claimed_score, suite_opts, true_score
 from .gate import Gate
 from .harness import Harness, placebo_for
 from .providers import QuotaExhausted, RateLimitError, TransientError
@@ -113,8 +114,11 @@ class Outcome:
 class Lab:
     def __init__(self, ev, make_proposer, gate: Gate | None = None, emit=None,
                  log_path: str = "experiments.jsonl", requests_fn=None, mode: str = "mock",
-                 player_model: str = "", control: Control | None = None):
+                 player_model: str = "", control: Control | None = None, calllog=None):
         self.ev, self.make_proposer = ev, make_proposer
+        self.calllog = calllog
+        self.prev_hash, self.rows = GENESIS, 0
+        ev.calllog = calllog
         self.gate = gate or Gate(ev)
         self._emit = emit or (lambda t, **k: None)
         self.log_path, self.requests_fn = log_path, requests_fn or (lambda: 0)
@@ -157,6 +161,7 @@ class Lab:
                     try:
                         r = json.loads(line)
                         seen.add((r["phase"], r["round"], r["parent"], r["child"], r["kind"]))
+                        self.prev_hash, self.rows = r.get("hash", self.prev_hash), self.rows + 1
                     except (ValueError, KeyError):
                         pass
         except FileNotFoundError:
@@ -171,8 +176,36 @@ class Lab:
             if key in self._seen:        # a resumed run replays from cache: do not double-log
                 return
             self._seen.add(key)
+            rec["exp_id"] = f"e{self.rows + 1:04d}"
+            rec["prev_hash"] = self.prev_hash
+            rec["prereg_sha"], rec["code_sha"] = prereg_sha(), code_sha()
+            rec["hash"] = record_hash(rec)
             with open(self.log_path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(rec) + "\n")
+            self.prev_hash, self.rows = rec["hash"], self.rows + 1
+        self.emit("experiment", exp_id=rec["exp_id"], hash=rec["hash"][:12], kind=rec["kind"],
+                  decision=rec["decision"])
+
+    def suite_data(self, harnesses: dict, suites=("held", "regression", "canary", "audit")) -> tuple:
+        """Per-world scores (and the call ids behind them) for every evaluated (harness, suite):
+        stored in the record so a verifier can recompute the gate numbers."""
+        data, ids = {}, set()
+        for suite in suites:
+            row = {}
+            for name, h in harnesses.items():
+                eps = self.ev.cached(h, suite)
+                if not eps:
+                    continue
+                row[name] = {"version": h.version, "seeds": [e.seed for e in eps],
+                             "scores": [round(true_score(e), 6) for e in eps]}
+                if suite == "held":
+                    row[name]["claimed_scores"] = [round(claimed_score(e, h), 6) for e in eps]
+                    row[name]["tokens"] = [e.tokens for e in eps]
+                for e in eps:
+                    ids.update(e.call_ids or [])
+            if row:
+                data[suite] = row
+        return data, ids
 
     @staticmethod
     def diff(parent: Harness, child: Harness) -> dict:
@@ -184,7 +217,7 @@ class Lab:
 
     # ---- the loop -----------------------------------------------------------------------
     def evaluate(self, parent: Harness, child: Harness, kind: str, note: str,
-                 proposer_model: str = "", side: bool = False) -> Outcome:
+                 proposer_model: str = "", side: bool = False, proposer_call_id: str = "") -> Outcome:
         """side=True: judge the candidate against `parent` WITHOUT touching the main lineage
         (used to test a tempting-but-bad lesson against the original harness)."""
         touched = [k for k in child.files if child.files[k] != parent.files.get(k)]
@@ -196,11 +229,15 @@ class Lab:
                             on_check=lambda c: self.emit("gate_check", child=child.version, **c))
         used = self.requests_fn() - r0
         verdict = "accepted" if d.accepted else "rejected"
+        suites, ids = self.suite_data({"parent": parent, "child": child, "placebo": plc})
+        if proposer_call_id:
+            ids.add(proposer_call_id)
         self.log_experiment({
             "parent": parent.version, "child": child.version, "kind": kind, "lesson": note,
             "diff": self.diff(parent, child), "proposer_model": proposer_model,
             "checks": d.checks, "metrics": d.metrics, "decision": verdict, "reason": d.reason,
-            "requests_used": used, "side_branch": side})
+            "requests_used": used, "side_branch": side, "suites": suites,
+            "call_ids": sorted(ids), "proposer_call_id": proposer_call_id})
         self.last_decision = {"child": child.version, "accepted": d.accepted, "reason": d.reason,
                               "checks": d.checks, "kind": kind}
         if side:
@@ -233,7 +270,8 @@ class Lab:
         model = prop.last_model or getattr(prop.provider, "model", "")
         self.emit("proposal", style=style, status=prop.last_status, model=model,
                   lesson=cands[0].note if cands else "", counts=prop.last_counts, side=True)
-        return [self.evaluate(parent, parent.with_patch(c.patch), c.kind, c.note, model, side=True)
+        return [self.evaluate(parent, parent.with_patch(c.patch), c.kind, c.note, model, side=True,
+                              proposer_call_id=prop.last_call_id)
                 for c in cands] if cands else None
 
     def audit(self):
@@ -249,7 +287,9 @@ class Lab:
         bad = drop > self.gate.cfg.audit_tol
         self.emit("audit", version=child.version, parent=parent.version, before=before,
                   after=after, drop=drop, regressed=bad)
+        suites, ids = self.suite_data({"parent": parent, "child": child}, suites=("audit",))
         self.log_experiment({
+            "suites": suites, "call_ids": sorted(ids),
             "parent": parent.version, "child": child.version,
             "kind": "rollback" if bad else "audit", "lesson": self.nodes[child.version]["lesson"],
             "diff": self.diff(parent, child), "proposer_model": "",
@@ -284,10 +324,12 @@ class Lab:
             self.log_experiment({"parent": self.current.version, "child": "-", "kind": "none",
                                  "lesson": "", "diff": {}, "proposer_model": model, "checks": [],
                                  "metrics": {}, "decision": "none", "reason": prop.last_status,
-                                 "requests_used": 0})
+                                 "requests_used": 0, "suites": {},
+                                 "call_ids": [prop.last_call_id] if prop.last_call_id else [],
+                                 "proposer_call_id": prop.last_call_id})
             return None
-        return [self.evaluate(self.current, self.current.with_patch(c.patch), c.kind, c.note, model)
-                for c in cands]
+        return [self.evaluate(self.current, self.current.with_patch(c.patch), c.kind, c.note, model,
+                              proposer_call_id=prop.last_call_id) for c in cands]
 
     def submit(self, kind: str, child: Harness, note: str, model: str = "") -> Outcome:
         """Submit an externally built candidate (placebo note, etc.) to the same gate."""

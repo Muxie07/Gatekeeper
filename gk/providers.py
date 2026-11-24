@@ -30,6 +30,12 @@ class Completion:
     tokens_out: int
     cached: bool = False
     model: str = ""      # which model produced the text (filled in by CachedProvider)
+    # evidence fields (never part of the request or the cache key)
+    latency_ms: int = 0
+    http_status: int | None = None
+    model_version: str = ""    # Gemini "modelVersion", when returned
+    response_id: str = ""      # Gemini "responseId", when returned
+    call_id: str = ""          # id of the line this call got in calls.jsonl
 
 
 class RateLimitError(Exception):
@@ -86,8 +92,10 @@ class GeminiProvider(Provider):
         req = urllib.request.Request(
             url, data=json.dumps(body).encode(),
             headers={"Content-Type": "application/json", "x-goog-api-key": self.api_key})
+        t0 = time.time()
         try:
             with self.opener(req, timeout=self.timeout) as r:
+                status = getattr(r, "status", None)
                 data = json.load(r)
         except urllib.error.HTTPError as e:
             if e.code == 429:
@@ -100,7 +108,11 @@ class GeminiProvider(Provider):
         parts = data["candidates"][0]["content"].get("parts", [])
         text = "".join(p.get("text", "") for p in parts)
         u = data.get("usageMetadata", {})
-        return Completion(text, u.get("promptTokenCount", 0), u.get("candidatesTokenCount", 0))
+        return Completion(text, u.get("promptTokenCount", 0), u.get("candidatesTokenCount", 0),
+                          latency_ms=int((time.time() - t0) * 1000),
+                          http_status=status if isinstance(status, int) else 200,
+                          model_version=str(data.get("modelVersion", "")),
+                          response_id=str(data.get("responseId", "")))
 
 
 class RateLimiter:
@@ -206,11 +218,16 @@ class CachedProvider(Provider):
         d = self.store.get(k)
         if d:
             self.hits += 1
-            return Completion(d["text"], d["i"], d["o"], cached=True, model=self.model)
+            meta = d.get("meta", {})
+            return Completion(d["text"], d["i"], d["o"], cached=True, model=self.model,
+                              http_status=meta.get("status"), model_version=meta.get("mv", ""),
+                              response_id=meta.get("rid", ""))
         self.misses += 1
         c = self.inner.complete(prompt, system, max_tokens)
         c.model = self.model
         d = {"k": k, "text": c.text, "i": c.tokens_in, "o": c.tokens_out}
+        if c.model_version or c.response_id or c.http_status:
+            d["meta"] = {"status": c.http_status, "mv": c.model_version, "rid": c.response_id}
         self.store[k] = d
         with open(self.path, "a", encoding="utf-8") as f:
             f.write(json.dumps(d) + "\n")

@@ -20,6 +20,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
+from gk.calllog import CallLog
 from gk.lab import Control, resume_hint, round_budget
 from gk.real import REAL_SUITES
 from gk.setup import make_mock, make_real
@@ -102,7 +103,8 @@ class Runner:
                 return 400, {"error": "confirm that the AI Studio project has NO billing attached "
                                       "(confirm_no_billing)"}
             try:
-                stack = make_real(os.path.join(self.workdir, self.config_path), self.workdir)
+                stack = make_real(os.path.join(self.workdir, self.config_path), self.workdir,
+                                  CallLog(os.path.join(self.workdir, "calls.jsonl")))
             except (FileNotFoundError, ValueError, KeyError) as e:
                 return 400, {"error": f"cannot start real mode: {e}"}
             if not _has_key():
@@ -111,7 +113,7 @@ class Runner:
             if used_up:
                 return 429, {"error": f"STOP: free quota used up ({used_up}). {resume_hint()}"}
         else:
-            stack = make_mock()
+            stack = make_mock(CallLog(os.path.join(self.workdir, "calls.mock.jsonl"), simulated=True))
         self.stack, self.mode, self.badge = stack, mode, stack.badge()
         self.log_path = self.log_override or os.path.join(
             self.workdir, "experiments.jsonl" if mode == "real" else "experiments.mock.jsonl")

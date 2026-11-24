@@ -30,6 +30,7 @@ class Episode:
     tokens: int
     events: list
     trace: list = None  # per-step "action -> feedback" lines (real runs only)
+    call_ids: list = None  # ids of the model calls this episode used (calls.jsonl)
 
 
 def task_for(seed: int, p_sword: float) -> str:
@@ -96,6 +97,10 @@ class Evaluator:
         elif self.on_suite:
             self.on_suite("suite_cached", suite=suite, version=h.version, episodes=self._cache[key])
         return self._cache[key]
+
+    def cached(self, h: Harness, suite: str):
+        """Episodes already played for this harness version and suite (None if not played yet)."""
+        return self._cache.get((h.version, suite))
 
     def mean_true(self, h, suite):
         r = self.run(h, suite)

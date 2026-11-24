@@ -74,7 +74,28 @@ def _gain(row) -> str:
     return f"gain {m.get('gain', 0):+.3f} (lower bound {m.get('gain_lower', 0):+.3f})" if "gain" in m else ""
 
 
-def criteria(rows: list[dict], final: dict | None, phases_run: dict) -> list[dict]:
+def cite(r: dict, n: int = 3) -> str:
+    """Experiment id and a few of the call ids behind it, so a reader can trace the claim."""
+    ids = r.get("call_ids", [])[:n]
+    return f"[{r.get('exp_id', '?')}{'; calls ' + ', '.join(ids) if ids else ''}]"
+
+
+def live_episode(calls: list[dict] | None) -> dict | None:
+    """First complete player episode in which EVERY step was a fresh model call (cache miss)."""
+    eps: dict = {}
+    for c in calls or []:
+        if c.get("role") == "player" and c.get("episode") and not c.get("simulated"):
+            eps.setdefault(c["episode"], []).append(c)
+    for name, cs in eps.items():
+        steps = sorted(c.get("step", 0) for c in cs)
+        if (cs and steps == list(range(1, len(cs) + 1)) and all(c["cache"] == "miss" and not c.get("error")
+                                                                 for c in cs)):
+            return {"episode": name, "steps": len(cs), "call_ids": [c["call_id"] for c in cs][:3],
+                    "models": sorted({c["model"] for c in cs})}
+    return None
+
+
+def criteria(rows: list[dict], final: dict | None, phases_run: dict, calls: list[dict] | None = None) -> list[dict]:
     main = [r for r in rows if not r.get("side_branch")]
     out = []
 
@@ -82,7 +103,7 @@ def criteria(rows: list[dict], final: dict | None, phases_run: dict) -> list[dic
     if acc:
         r = acc[0]
         ev = (f"version {r['parent']} -> {r['child']} accepted in round {r['round']}: "
-              f"\"{r['lesson']}\" ({_gain(r)}; proposer {r['proposer_model']}). "
+              f"\"{r['lesson']}\" ({_gain(r)}; proposer {r['proposer_model']}) {cite(r)}. "
               f"Honest rounds that ran: {sum(1 for x in main if x['phase'] == 'honest' and x['kind'] in ('llm', 'none'))}.")
         out.append({"id": 1, "name": ">=1 real improvement accepted", "status": "PASS", "evidence": ev})
     else:
@@ -94,7 +115,7 @@ def criteria(rows: list[dict], final: dict | None, phases_run: dict) -> list[dic
     rej = [r for r in main if r["kind"] in ("placebo", "overfit") and r["decision"] == "rejected"]
     if rej:
         out.append({"id": 2, "name": ">=1 placebo or overfit candidate rejected", "status": "PASS",
-                    "evidence": "; ".join(f"{r['kind']} rejected: {r['reason']}" for r in rej)})
+                    "evidence": "; ".join(f"{r['kind']} rejected: {r['reason']} {cite(r)}" for r in rej)})
     else:
         ran = [r for r in main if r["kind"] in ("placebo", "overfit")]
         out.append({"id": 2, "name": ">=1 placebo or overfit candidate rejected",
@@ -109,7 +130,7 @@ def criteria(rows: list[dict], final: dict | None, phases_run: dict) -> list[dic
         out.append({"id": 3, "name": ">=1 regression rejection or rollback", "status": "PASS",
                     "evidence": "; ".join(
                         f"{r['kind']}{' (side branch vs original)' if r.get('side_branch') else ''} "
-                        f"\"{r['lesson'][:80]}\": {r['reason']}" for r in reg)})
+                        f"\"{r['lesson'][:80]}\": {r['reason']} {cite(r)}" for r in reg)})
     else:
         out.append({"id": 3, "name": ">=1 regression rejection or rollback",
                     "status": "FAIL" if adv and phases_run.get("regression") == "done" else "NOT YET",
@@ -131,6 +152,18 @@ def criteria(rows: list[dict], final: dict | None, phases_run: dict) -> list[dic
     else:
         out.append({"id": 4, "name": "original vs improved on unseen scenarios (numbers)", "status": "NOT YET",
                     "evidence": "final measurement not completed"})
+    live = live_episode(calls)
+    if live:
+        out.append({"id": 5, "name": "live model decisions (a full episode, every step a fresh call)",
+                    "status": "PASS",
+                    "evidence": (f"episode {live['episode']}: {live['steps']} steps, all cache=miss, "
+                                 f"model(s) {', '.join(live['models'])}; calls {', '.join(live['call_ids'])} "
+                                 "(calls.jsonl)")})
+    else:
+        out.append({"id": 5, "name": "live model decisions (a full episode, every step a fresh call)",
+                    "status": "NOT YET",
+                    "evidence": "no complete real episode with every step a cache miss in calls.jsonl yet "
+                                "(simulated calls do not count)"})
     return out
 
 
@@ -165,11 +198,15 @@ def requests_report(stack) -> dict:
 
 
 def write_all(outdir: str, rows: list[dict], final: dict | None, stack, status: dict, phases_run: dict,
-              simulated: bool, models: dict) -> dict:
+              simulated: bool, models: dict, calls: list[dict] | None = None,
+              verification: dict | None = None) -> dict:
+    """rows must already be VERIFIED records (gk.verify.verified_rows); `verification` says how many
+    records were found and how many failed verification and were therefore left out."""
     os.makedirs(outdir, exist_ok=True)
-    crit = criteria(rows, final, phases_run)
+    crit = criteria(rows, final, phases_run, calls)
     summary = {
         "generated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "verification": verification or {}, "calls_logged": len(calls or []),
         "SIMULATED": simulated, "models": models, "phases": phases_run, "status": status,
         "criteria": crit, "all_pass": all(c["status"] == "PASS" for c in crit),
         "final_comparison": final, "experiments": len(rows),
@@ -193,11 +230,16 @@ def markdown(s: dict, rows: list[dict], reqs: dict) -> str:
           "| # | Criterion | Result | Evidence |", "|---|---|---|---|"]
     for c in s["criteria"]:
         L.append(f"| {c['id']} | {c['name']} | **{c['status']}** | {c['evidence'].replace('|', '/')} |")
+    v = s.get("verification") or {}
     L += ["", f"Overall: **{'ALL PASS' if s['all_pass'] else 'NOT ALL PASS'}**", "",
-          f"Run status: {s['status']}", "", "## Experiments (experiments.jsonl)", "",
-          "| phase | round | kind | parent -> child | decision | reason | requests |", "|---|---|---|---|---|---|---|"]
+          f"Run status: {s['status']}", "",
+          f"Evidence: {v.get('verified', 0)} of {v.get('records', 0)} experiment records passed "
+          f"`python -m gk.verify` (hash chain, cited calls exist, gate numbers recomputed) and are the only "
+          f"ones used here; {s.get('calls_logged', 0)} model calls are logged in calls.jsonl.", "",
+          "## Experiments (verified records of experiments.jsonl)", "",
+          "| id | phase | round | kind | parent -> child | decision | reason | requests |", "|---|---|---|---|---|---|---|---|"]
     for r in rows:
-        L.append(f"| {r['phase']} | {r['round']} | {r['kind']}{' (side)' if r.get('side_branch') else ''} | "
+        L.append(f"| {r.get('exp_id', '?')} | {r['phase']} | {r['round']} | {r['kind']}{' (side)' if r.get('side_branch') else ''} | "
                  f"{r['parent']} -> {r['child']} | {r['decision']} | {r['reason'].replace('|', '/')} | {r.get('requests_used', 0)} |")
     fc = s.get("final_comparison")
     if fc:

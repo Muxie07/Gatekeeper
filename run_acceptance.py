@@ -20,10 +20,12 @@ import os
 import sys
 
 from gk.acceptance import PHASES, acceptance_budget, final_comparison, preflight, read_rows, write_all
+from gk.calllog import CallLog, read_calls
 from gk.harness import placebo
 from gk.lab import resume_hint
 from gk.providers import QuotaExhausted, RateLimitError, TransientError
 from gk.setup import make_mock, make_real
+from gk.verify import verified_rows
 
 SHOW = {"proposal", "candidate", "gate_check", "decision", "audit", "rollback", "report"}
 
@@ -66,14 +68,17 @@ def main():
         sys.exit(2)
 
     if args.mock:
-        stack, outdir, log = make_mock(), "acceptance_simulated", os.path.join("acceptance_simulated", "experiments.jsonl")
+        outdir = "acceptance_simulated"
         os.makedirs(outdir, exist_ok=True)
+        log, calls_path = os.path.join(outdir, "experiments.jsonl"), os.path.join(outdir, "calls.mock.jsonl")
+        stack = make_mock(CallLog(calls_path, simulated=True))
         print("\n*** SIMULATED RUN: mock models, nothing real is measured ***")
     else:
         from app import _has_key
         if not _has_key():
             sys.exit("No GEMINI_API_KEY in .env or the environment.")
-        stack, outdir, log = make_real(args.config), "acceptance", "experiments.jsonl"
+        outdir, log, calls_path = "acceptance", "experiments.jsonl", "calls.jsonl"
+        stack = make_real(args.config, calllog=CallLog(calls_path))
         used_up = stack.exhausted()
         if used_up:
             sys.exit(f"STOP: free quota used up ({used_up}). {resume_hint()}")
@@ -146,11 +151,17 @@ def main():
             phases["final"] = "done"
             lab.measure("final")
 
-    rows = [r for r in read_rows(log) if r["phase"] in PHASES]
-    if not args.mock:
-        rows = [r for r in rows if r["mode"] == "real"]
+    good, every, results = verified_rows(log, calls_path) if os.path.exists(log) else ([], [], [])
+    sel = lambda rs: [r for r in rs if r.get("phase") in PHASES and (args.mock or r.get("mode") == "real")]
+    rows = sel(good)
+    verification = {"records": len(sel(every)), "verified": len(rows),
+                    "failed_checks": [f"{e} {c}: {d}" for e, c, ok, d in results if not ok][:20]}
+    if verification["records"] != verification["verified"]:
+        print(f"WARNING: {verification['records'] - verification['verified']} record(s) failed "
+              "verification and are excluded; run python -m gk.verify")
     models = {"player": stack.player_model, "proposers": stack.proposer_models}
-    summary = write_all(outdir, rows, final, stack, stopped or "completed", phases, args.mock, models)
+    summary = write_all(outdir, rows, final, stack, stopped or "completed", phases, args.mock, models,
+                        calls=read_calls(calls_path), verification=verification)
     print(f"\nWrote {outdir}/ACCEPTANCE.md, summary.json, requests.json")
     for c in summary["criteria"]:
         print(f"  {c['status']:8s} {c['id']}. {c['name']}")

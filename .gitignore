@@ -8,3 +8,6 @@ __pycache__/
 
 experiments.mock.jsonl
 acceptance_simulated/
+calls.mock.jsonl
+events.mock.jsonl
+ui_check/

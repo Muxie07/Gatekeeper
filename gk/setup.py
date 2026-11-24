@@ -1,4 +1,4 @@
-"""Build the model stack for a run: REAL (Gemini free tier) or MOCK (no network, simulated).
+﻿"""Build the model stack for a run: REAL (Gemini free tier) or MOCK (no network, simulated).
 
 Real: every model must be on the free-tier allowlist, every call goes cache -> rate limiter ->
 ledger -> Gemini, and the limits are enforced client-side before each request.
@@ -9,6 +9,7 @@ import json
 import os
 from dataclasses import dataclass, field
 
+from .calllog import CallLog, LoggedProvider
 from .lab import Lab
 from .mock import mock_player, mock_proposer
 from .providers import (DEFAULT_ALLOWED, FallbackProvider, Ledger, MockProvider, build_provider)
@@ -33,6 +34,7 @@ class Stack:
     limits: dict = field(default_factory=dict)   # model -> {"rpd": n, "tpd": n}
     workdir: str = "."
     mock_calls: callable = None
+    calllog: object = None
 
     def requests(self) -> int:
         """Cumulative REAL requests today (real) or simulated calls (mock)."""
@@ -44,7 +46,7 @@ class Stack:
         ev = RealEvaluator(self.player, REAL_SUITES)
         return Lab(ev, lambda style: LLMProposer(self.proposer, style), emit=emit, log_path=log_path,
                    requests_fn=self.requests, mode=self.mode, player_model=self.player_model,
-                   control=control)
+                   control=control, calllog=self.calllog)
 
     def badge(self) -> str:
         return (f"REAL · {self.player_model}" if self.mode == "real"
@@ -88,7 +90,7 @@ def _limiter_count(workdir: str, model: str) -> int:
         return 0
 
 
-def make_real(config_path: str = "config.json", workdir: str = ".") -> Stack:
+def make_real(config_path: str = "config.json", workdir: str = ".", calllog: CallLog | None = None) -> Stack:
     cfg = json.load(open(config_path))
     allowed = cfg.get("allowed_models") or list(DEFAULT_ALLOWED)
     ledger = Ledger(os.path.join(workdir, "usage_ledger.json"))
@@ -99,12 +101,20 @@ def make_real(config_path: str = "config.json", workdir: str = ".") -> Stack:
     base = {"provider": cfg["provider"], "allowed_models": allowed}
     player = build_provider({**base, **{k: v for k, v in cfg.items() if k != "proposer"}}, workdir, ledger)
     proposer = FallbackProvider([build_provider({**base, **m}, workdir, ledger) for m in pmodels])
+    if calllog is not None:
+        player, proposer = LoggedProvider(player, calllog, "player"), LoggedProvider(proposer, calllog, "proposer")
     return Stack("real", player, proposer, cfg["model"], [m["model"] for m in pmodels], ledger,
-                 limits, workdir)
+                 limits, workdir, calllog=calllog)
 
 
-def make_mock() -> Stack:
+def make_mock(calllog: CallLog | None = None) -> Stack:
     player = MockProvider(mock_player, "mock-player")
     proposer = MockProvider(mock_proposer, "mock-proposer")
+    raw_player, raw_proposer = player, proposer
+    counts = lambda: raw_player.calls + raw_proposer.calls
+    if calllog is not None:
+        calllog.simulated = True
+        player, proposer = LoggedProvider(player, calllog, "player"), LoggedProvider(proposer, calllog, "proposer")
     return Stack("mock", player, proposer, "mock-player", ["mock-proposer"],
-                 mock_calls=lambda: player.calls + proposer.calls)
+                 mock_calls=counts, calllog=calllog)
+

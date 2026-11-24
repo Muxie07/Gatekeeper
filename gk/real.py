@@ -38,24 +38,35 @@ class RealEvaluator(Evaluator):
         self.emit = lambda *a, **k: None     # live-display hook: emit(type, **data)
         self.checkpoint = lambda: None       # pause/stop hook, called before every model call
         self.label = ""                      # who is playing (parent / child / placebo ...)
+        self.calllog = None                  # optional CallLog: gives each call its world/step
 
     def episode(self, h: Harness, seed: int, task: str, **opts) -> Episode:
         env, agent = MiniCraft(seed, task, **opts), LLMAgent(h, self.provider)
         trace = []
-        info = {"suite": self.context.get("suite"), "version": h.version, "label": self.label,
+        suite = self.context.get("suite")
+        info = {"suite": suite, "version": h.version, "label": self.label,
                 "seed": seed, "task": task, "hazard": env.hazard, "max_steps": env.max_steps}
-        self.emit("episode_start", **info)
+        episode_id = f"{suite}:{h.version}:{seed}"
+        self.emit("episode_start", **info, episode=episode_id)
         while not env.done():
             self.checkpoint()
+            if self.calllog:
+                self.calllog.set_context(world=seed, suite=suite, version=h.version,
+                                         episode=episode_id, step=env.steps + 1)
             a = agent.act(env)
             env.step(a)
             trace.append(f"{a} -> {env.last}")
-            self.emit("step", **info, step=env.steps, prompt=agent.last_prompt, raw=agent.last_raw,
-                      action=a, outcome=env.last, inventory=dict(env.inv), sheltered=env.sheltered,
-                      cue=env.cue(), cached=agent.last_cached)
+            self.emit("step", **info, episode=episode_id, step=env.steps, prompt=agent.last_prompt,
+                      raw=agent.last_raw, action=a, outcome=env.last, inventory=dict(env.inv),
+                      sheltered=env.sheltered, cue=env.cue(), cached=agent.last_cached,
+                      call_id=agent.last_call_id, latency_ms=agent.last_latency_ms)
+        if self.calllog:
+            self.calllog.clear_context()
         ok = env.success()
-        ep = Episode(seed, task, ok, ok, env.steps, agent.tokens, list(env.events), trace)
-        self.emit("episode_end", **info, success=ok, steps=env.steps, mistakes=list(env.events))
+        ep = Episode(seed, task, ok, ok, env.steps, agent.tokens, list(env.events), trace,
+                     list(agent.call_ids))
+        self.emit("episode_end", **info, episode=episode_id, success=ok, steps=env.steps,
+                  mistakes=list(env.events))
         return ep
 
 
@@ -115,6 +126,7 @@ class LLMProposer:
         self.last_model = ""    # which model wrote the last lesson
         self.last_counts: dict = {}
         self.last_raw = ""
+        self.last_call_id = ""
 
     def _prompt(self, parent: Harness, train: list, rejected, counts) -> str:
         lessons = parent.memory_text() or "(none yet)"
@@ -138,6 +150,7 @@ class LLMProposer:
             return []
         c = self.provider.complete(self._prompt(parent, train, rejected, counts), max_tokens=1024)
         out, self.last_model, self.last_raw = c.text, c.model or getattr(self.provider, "model", ""), c.text
+        self.last_call_id = c.call_id
         m = re.search(r"\{.*\}", out, re.S)
         try:
             lesson = json.loads(m.group(0))["lesson"].strip()[:200]
