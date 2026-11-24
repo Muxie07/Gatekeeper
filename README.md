@@ -9,6 +9,8 @@ The game is only a testbed; the gate is the project.
 
 Built and run entirely on the **free Gemini API tier** ($0).
 
+**Live dashboard:** https://muxie07.github.io/gatekeeper/ (no API key needed; it replays saved results)
+
 ## Headline finding (real Gemini runs)
 
 A self-improvement loop that accepts any lesson that raises the score would have kept two
