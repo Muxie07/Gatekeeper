@@ -67,7 +67,7 @@ const el=(t,c,x)=>{const e=document.createElement(t);if(c)e.className=c;if(x!==u
 const CHECKS=["allowlist","held-out gain","beats placebo","regression suite","integrity","canary","cost"];
 const ICON={wood:"🪵",stone:"🪨",iron:"🔩",table:"🪑",pickaxe:"⛏️",sword:"🗡️"};
 const REPLAY=new URLSearchParams(location.search).get("replay");
-let lastId=0,cur={},stoppedReason="",es=null,nodes={},nodeInfo={},curVersion="",lessons=[],selNode="",reports={};
+let lastId=0,cur={},stoppedReason="",es=null,nodes={},nodeInfo={},curVersion="",lessons=[],selNode="",reports={},verLessons={},REPLAY_SIM=false;
 
 function setBadge(text,mode){const b=$("badge");b.textContent=text;b.className="badge "+({real:"b-real",mock:"b-mock",replay:"b-replay"}[mode]||"b-idle")}
 function banner(msg,kind){const b=$("banner");b.style.display=msg?"block":"none";b.textContent=msg;b.style.color=`var(--${kind||"warn"})`;b.style.borderColor=`var(--${kind||"warn"})`}
@@ -144,7 +144,11 @@ async function showNode(v){
 function candidate(e){
   cur={checks:{},diff:e.diff,child:e.child,parent:e.parent,kind:e.kind,side:e.side,final:null,rolled:false};
   ensureNode(e.parent,null,"root","(parent)","");ensureNode(e.child,e.parent,"evaluating",e.lesson,e.kind);
-  nodeInfo[e.child]={diff:e.diff};renderGate();renderHarness();
+  nodeInfo[e.child]={diff:e.diff};
+  const base=verLessons[e.parent]||(!curVersion||e.parent===curVersion?lessons:[]),d=e.diff||{},gone=new Set(d.removed_lessons||[]);
+  if(!verLessons[e.parent])verLessons[e.parent]=base.slice();
+  verLessons[e.child]=base.filter(l=>!gone.has(l)).concat(d.added_lessons||[]);
+  renderGate();renderHarness();
 }
 function renderGate(){
   const b=$("gate");b.textContent="";if(!cur.child){b.textContent="No candidate yet.";return}
@@ -172,13 +176,13 @@ function logEvent(e){
   const s=e.type+" "+JSON.stringify(Object.fromEntries(Object.entries(e).filter(([k])=>!["id","type","ts","prompt","episodes","budget"].includes(k)))).slice(0,220);
   pushRow($("events"),el("div","row",s),150)}
 
-function resetView(){["decisions","mistakes","events"].forEach(i=>$(i).textContent="");cur={};nodes={};nodeInfo={};lessons=[];curVersion="";selNode="";reports={};
+function resetView(){["decisions","mistakes","events"].forEach(i=>$(i).textContent="");cur={};nodes={};nodeInfo={};lessons=[];verLessons={};curVersion="";selNode="";reports={};
   $("proposal").textContent="";$("nodeInfo").textContent="";renderGate();renderHarness();renderBA();banner("")}
 
 function handle(e){
   lastId=Math.max(lastId,e.id||0);logEvent(e);
   switch(e.type){
-  case"run_start":resetView();stoppedReason="";setBadge(REPLAY?"REPLAY (recorded"+(e.mode==="mock"?", simulated":"")+")":e.badge,REPLAY?"replay":e.mode);
+  case"run_start":resetView();stoppedReason="";setBadge(REPLAY?"REPLAY (recorded"+(e.mode==="mock"||REPLAY_SIM?", simulated":"")+")":e.badge,REPLAY?"replay":e.mode);
     $("budget").textContent=e.budget?"Budget per round (model calls): first ≈"+e.budget.first_round_typical+" typical / "+e.budget.first_round_worst+" worst; later ≈"+e.budget.later_round_typical+" / "+e.budget.later_round_worst:"";break;
   case"demo_start":{banner(`New demo game: world ${e.seed}, goal ${e.task}, harness ${e.version} — ${e.mode==="real"?"every step is a LIVE model call":"SIMULATED (mock) calls"}`,"warn");
     if(!curVersion){curVersion=e.version;ensureNode(e.version,null,"root","(original harness)","")}break}
@@ -200,10 +204,10 @@ function handle(e){
   case"decision":{cur.final={accepted:e.accepted,reason:e.reason};renderGate();
     const info=nodeInfo[e.child]=Object.assign(nodeInfo[e.child]||{},{accepted:e.accepted,reason:e.reason,checks:Object.values(cur.checks)});
     if(nodes[e.child]){ if(e.accepted&&!e.side){const pv=nodes[curVersion];if(pv&&pv.status==="current")pv.status=(pv.parent?"accepted":"root");nodes[e.child].status="current";
-        curVersion=e.child;const a=(cur.diff&&cur.diff.added_lessons)||[];lessons=lessons.concat(a)} else nodes[e.child].status=e.accepted?"accepted":"rejected"}
+        curVersion=e.child;lessons=(verLessons[e.child]||lessons).slice()} else nodes[e.child].status=e.accepted?"accepted":"rejected"}
     renderHarness();banner((e.accepted?"ACCEPTED ":"REJECTED ")+e.child+": "+e.reason,e.accepted?"ok":"bad");break}
   case"audit":banner(`Audit of ${e.version} on fresh old-skill worlds: ${e.before.toFixed(3)} → ${e.after.toFixed(3)} ${e.regressed?"(REGRESSED)":"(ok)"}`,e.regressed?"bad":"ok");break;
-  case"rollback":{if(nodes[e.version])nodes[e.version].status="rolled_back";if(nodes[e.restored])nodes[e.restored].status="current";curVersion=e.restored;
+  case"rollback":{if(nodes[e.version])nodes[e.version].status="rolled_back";if(nodes[e.restored])nodes[e.restored].status="current";curVersion=e.restored;lessons=(verLessons[e.restored]||[]).slice();
     if(cur.child===e.version){cur.rolled=true;cur.final=cur.final||{accepted:true,reason:""};cur.final.reason="audit dropped "+e.drop.toFixed(3);renderGate()}
     renderHarness();banner(`ROLLED BACK: restored ${e.restored}, dropped ${e.version}`,"warn");break}
   case"report":reports[e.stage]=e;renderBA();break;
@@ -263,11 +267,11 @@ async function startReplay(){
   setBadge("REPLAY (recorded)","replay");banner("REPLAY: this page is playing back a recorded run. No model is being called.","warn");renderQuota(null);
   let text;try{const r=await fetch("/replay?file="+encodeURIComponent(REPLAY));if(!r.ok)throw 0;text=await r.text()}catch(_){text=await (await fetch(REPLAY)).text()}
   let ev=parseEvents(text);const starts=ev.map((e,i)=>e.type==="run_start"?i:-1).filter(i=>i>=0);if(starts.length)ev=ev.slice(starts[starts.length-1]);
-  replayEvents=ev;playFrom(0)}
+  replayEvents=ev;REPLAY_SIM=ev.some(x=>x.mode==="mock");setBadge("REPLAY (recorded"+(REPLAY_SIM?", simulated":"")+")","replay");playFrom(0)}
 function playFrom(i){clearTimeout(replayTimer);replayPos=i;if(i===0){lastId=0;resetView()}
   const delay=+$("speed").value;
   const tick=()=>{if(replayPos>=replayEvents.length){banner("REPLAY finished ("+replayEvents.length+" recorded events). Nothing was called.","warn");return}
-    const n=delay===0?replayEvents.length:1;for(let k=0;k<n&&replayPos<replayEvents.length;k++){const e=replayEvents[replayPos++];handle(e);if(e.type==="run_start")setBadge("REPLAY (recorded"+(e.mode==="mock"?", simulated":"")+")","replay")}
+    const n=delay===0?replayEvents.length:1;for(let k=0;k<n&&replayPos<replayEvents.length;k++){const e=replayEvents[replayPos++];handle(e);if(e.type==="run_start")setBadge("REPLAY (recorded"+(e.mode==="mock"||REPLAY_SIM?", simulated":"")+")","replay")}
     replayTimer=setTimeout(tick,delay)};tick()}
 $("restart").onclick=()=>playFrom(0);
 
