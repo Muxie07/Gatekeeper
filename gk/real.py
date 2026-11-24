@@ -45,7 +45,8 @@ class RealEvaluator(Evaluator):
         trace = []
         suite = self.context.get("suite")
         info = {"suite": suite, "version": h.version, "label": self.label,
-                "seed": seed, "task": task, "hazard": env.hazard, "max_steps": env.max_steps}
+                "seed": seed, "task": task, "hazard": env.hazard, "max_steps": env.max_steps,
+                "model": getattr(self.provider, "model", "")}   # which model is playing (shown in the UI)
         episode_id = f"{suite}:{h.version}:{seed}"
         self.emit("episode_start", **info, episode=episode_id, static=env.static(), world=env.snapshot())
         while not env.done():

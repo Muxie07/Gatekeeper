@@ -1,6 +1,9 @@
 """Provider layer: swap models by changing config, never code.
 
-Stack (outermost first):  Cached -> Limited -> Gemini (or Mock)
+Stack (outermost first):  Cached -> Limited -> [Spend] -> Metered -> Gemini | Anthropic | Mock
+Gemini runs on the free tier with a hard Rs 0 cap. Anthropic is a PAID provider: it is allowed
+only for the models the user approved (claude-haiku-5-5) and only with an explicit max_spend_inr of
+at most Rs 300; a persistent spend meter refuses any call that could cross that cap.
 A cache hit never touches the rate limiter, so repeated runs cost no quota.
 The Gemini adapter has NOT been exercised against the live API from the build
 sandbox (no network route); it is tested with an injected fake transport.
@@ -113,6 +116,57 @@ class GeminiProvider(Provider):
                           http_status=status if isinstance(status, int) else 200,
                           model_version=str(data.get("modelVersion", "")),
                           response_id=str(data.get("responseId", "")))
+
+
+class AnthropicProvider(Provider):
+    """Claude Messages API over plain HTTPS (no SDK needed). PAID: always wrapped in a SpendProvider."""
+    name = "anthropic"
+    URL = "https://api.anthropic.com/v1/messages"
+
+    def __init__(self, model: str, api_key: str | None = None, timeout: int = 60,
+                 opener=urllib.request.urlopen):
+        self.model, self.timeout, self.opener = model, timeout, opener
+        load_dotenv()
+        self.api_key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
+
+    def complete(self, prompt, system="", max_tokens=256):
+        if not self.api_key:
+            raise RuntimeError("No Anthropic API key found. Paste it into the .env file after "
+                               "ANTHROPIC_API_KEY= (never commit that file).")
+        body = {"model": self.model, "max_tokens": max_tokens, "temperature": 0,
+                "messages": [{"role": "user", "content": prompt}]}
+        if system:
+            body["system"] = system
+        req = urllib.request.Request(
+            self.URL, data=json.dumps(body).encode(),
+            headers={"content-type": "application/json", "x-api-key": self.api_key,
+                     "anthropic-version": "2023-06-01"})
+        t0 = time.time()
+        try:
+            with self.opener(req, timeout=self.timeout) as r:
+                status = getattr(r, "status", None)
+                data = json.load(r)
+        except urllib.error.HTTPError as e:
+            try:
+                detail = e.read().decode("utf-8", "replace")[:300]
+            except Exception:
+                detail = ""
+            if e.code == 429:
+                raise RateLimitError(f"HTTP 429 {detail}") from e
+            if e.code in (500, 502, 503, 504, 529):
+                raise TransientError(f"HTTP {e.code} from provider (temporary)") from e
+            if "credit balance" in detail.lower():
+                raise QuotaExhausted("Anthropic credit balance is too low; add credits in the Console") from e
+            raise RuntimeError(f"Anthropic API HTTP {e.code}: {detail}") from e
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
+            raise TransientError(f"network problem: {e}") from e
+        text = "".join(b.get("text", "") for b in data.get("content", []) if b.get("type") == "text")
+        u = data.get("usage", {})
+        return Completion(text, u.get("input_tokens", 0) + u.get("cache_creation_input_tokens", 0)
+                          + u.get("cache_read_input_tokens", 0), u.get("output_tokens", 0),
+                          latency_ms=int((time.time() - t0) * 1000),
+                          http_status=status if isinstance(status, int) else 200,
+                          model_version=str(data.get("model", "")), response_id=str(data.get("id", "")))
 
 
 class RateLimiter:
@@ -290,19 +344,117 @@ class MeteredProvider(Provider):
         return c
 
 
+# ---- money: only for paid providers ---------------------------------------------------------
+# List prices, USD per million tokens (platform.claude.com/docs/en/about-claude/pricing, 2026-11-24).
+PRICES_USD_PER_MTOK = {"claude-haiku-5-5": {"in": 0.10, "out": 0.50, "in_long": 0.50, "out_long": 2.50,
+                                            "long_from": 100_000}}
+
+
+def call_cost_usd(model: str, tokens_in: int, tokens_out: int) -> float:
+    p = PRICES_USD_PER_MTOK[model]
+    long = tokens_in > p["long_from"]
+    return (tokens_in * (p["in_long"] if long else p["in"]) + tokens_out * (p["out_long"] if long else p["out"])) / 1e6
+
+
+class SpendMeter:
+    """Persistent running total of what paid calls cost (list price x the tokens the API reported).
+    Before every call it adds a WORST-CASE estimate of that call and refuses if the total could
+    cross the cap, so the cap is never exceeded. Anthropic's Console is the authority on billing;
+    this meter is a client-side guard. Credit purchases may also carry taxes (not counted here)."""
+
+    def __init__(self, path: str, cap_inr: float, usd_inr: float, clock=time.time):
+        self.path, self.cap_inr, self.usd_inr, self.clock = path, float(cap_inr), float(usd_inr), clock
+        self.lock = threading.Lock()
+
+    def _load(self) -> dict:
+        try:
+            with open(self.path, encoding="utf-8") as f:
+                return json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return {"total_usd": 0.0, "calls": 0, "by_day": {}}
+
+    def spent_inr(self) -> float:
+        return self._load()["total_usd"] * self.usd_inr
+
+    def check(self, model: str, prompt: str, system: str, max_tokens: int) -> None:
+        est_in = (len(prompt) + len(system)) // 3 + 64          # generous: ~3 characters per token
+        worst = call_cost_usd(model, est_in, max_tokens) * self.usd_inr
+        spent = self.spent_inr()
+        if spent + worst > self.cap_inr:
+            raise QuotaExhausted(f"spending cap reached: Rs {spent:.2f} of Rs {self.cap_inr:.0f} used "
+                                 f"(this call could cost up to Rs {worst:.4f}). Raise max_spend_inr only "
+                                 "with explicit permission.")
+
+    def record(self, model: str, tokens_in: int, tokens_out: int) -> None:
+        usd = call_cost_usd(model, tokens_in, tokens_out)
+        with self.lock:
+            d = self._load()
+            d["total_usd"] = d.get("total_usd", 0.0) + usd
+            d["calls"] = d.get("calls", 0) + 1
+            day = datetime.fromtimestamp(self.clock(), ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d")
+            row = d.setdefault("by_day", {}).setdefault(day, {}).setdefault(
+                model, {"calls": 0, "tokens_in": 0, "tokens_out": 0, "usd": 0.0})
+            row["calls"] += 1
+            row["tokens_in"] += tokens_in
+            row["tokens_out"] += tokens_out
+            row["usd"] += usd
+            d["cap_inr"], d["usd_inr"] = self.cap_inr, self.usd_inr
+            d["total_inr"] = d["total_usd"] * self.usd_inr
+            with open(self.path, "w", encoding="utf-8") as f:
+                json.dump(d, f, indent=1)
+
+
+class SpendProvider(Provider):
+    """Wraps a PAID provider: refuses a call that could cross the cap, records what each call cost.
+    Failed requests are not billed by Anthropic, so only successful calls are recorded."""
+
+    def __init__(self, inner: Provider, meter: SpendMeter):
+        self.inner, self.meter = inner, meter
+        self.name, self.model = inner.name, inner.model
+
+    def complete(self, prompt, system="", max_tokens=256):
+        self.meter.check(self.model, prompt, system, max_tokens)
+        c = self.inner.complete(prompt, system, max_tokens)
+        self.meter.record(self.model, c.tokens_in, c.tokens_out)
+        return c
+
+
 # Free-tier models only (AI Studio table). Anything else is refused: no accidental paid model.
 DEFAULT_ALLOWED = ("gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-3.6-flash")
 
 
-MAX_SPEND_INR = 0   # the spending cap. Raising it needs a code change AND the user's explicit permission.
+MAX_SPEND_INR = 0          # free providers (Gemini): the cap is Rs 0, always
+PAID_PROVIDERS = {"anthropic": ("claude-haiku-5-5",)}   # the only paid models the user has approved
+PAID_CEILING_INR = 300     # the user's limit; going above it needs a code change AND explicit permission
+DEFAULT_USD_INR = 95.0     # approx. mid-market rate on 2026-11-24; config "usd_inr" can update it
 
 
 def check_spend_cap(cfg: dict) -> None:
-    """Refuse to start if a config asks for any spending. There is no paid path to enable."""
+    """Free providers: max_spend_inr must be 0. Paid providers: it must be set explicitly, > 0 and
+    <= Rs 300 (the user's limit)."""
+    kind = cfg.get("provider", "gemini")
     v = cfg.get("max_spend_inr", 0)
+    if kind in PAID_PROVIDERS:
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or not 0 < v <= PAID_CEILING_INR:
+            raise ValueError(f"{kind} is a PAID provider: set max_spend_inr to an amount above 0 and at most "
+                             f"Rs {PAID_CEILING_INR} in config.json (got {v!r}).")
+        return
     if v != MAX_SPEND_INR:
         raise ValueError(f"max_spend_inr={v!r} refused: the spending cap is Rs {MAX_SPEND_INR}. Only free-tier "
                          "models can be called; raising the cap requires a code change and explicit permission.")
+
+
+def allowlist_for(cfg: dict) -> tuple:
+    """Models a config may use: the free-tier list for Gemini, the approved paid list for Anthropic.
+    A config can only narrow it."""
+    kind = cfg.get("provider", "gemini")
+    if kind in PAID_PROVIDERS:
+        base, req = PAID_PROVIDERS[kind], cfg.get("allowed_models")
+        extra = [m for m in (req or []) if m not in base]
+        if extra:
+            raise ValueError(f"allowed_models {extra} are not approved for {kind} {list(base)}; refusing.")
+        return tuple(req) if req else base
+    return free_tier_allowlist(cfg.get("allowed_models"))
 
 
 def free_tier_allowlist(requested=None) -> tuple:
@@ -328,12 +480,21 @@ def build_provider(cfg: dict, workdir: str = ".", ledger: "Ledger | None" = None
             raise ValueError(f"model {cfg['model']!r} is not on the free-tier allowlist {list(allowed)}; "
                              "refusing to call it (could bill).")
         inner: Provider = GeminiProvider(cfg["model"])
+    elif kind == "anthropic":
+        check_spend_cap(cfg)
+        allowed = allowlist_for(cfg)
+        if cfg["model"] not in allowed:
+            raise ValueError(f"model {cfg['model']!r} is not approved for paid use {list(allowed)}; refusing.")
+        inner = AnthropicProvider(cfg["model"])
     elif kind == "mock":
         inner = MockProvider(lambda p: "collect wood", cfg.get("model", "mock"))
     else:
         raise ValueError(f"unknown provider {kind!r}; add an adapter in providers.py")
     if ledger is not None:
         inner = MeteredProvider(inner, ledger, cfg.get("tpd", 0))
+    if kind in PAID_PROVIDERS:   # innermost money guard: every attempt is checked, cache hits are free
+        inner = SpendProvider(inner, SpendMeter(os.path.join(workdir, "spend_ledger.json"),
+                                                cfg["max_spend_inr"], cfg.get("usd_inr", DEFAULT_USD_INR)))
     limiter = RateLimiter(cfg.get("rpm", 15), cfg.get("rpd", 500),
                           os.path.join(workdir, f"quota_{kind}_{cfg['model']}.json"))
     return CachedProvider(LimitedProvider(inner, limiter),

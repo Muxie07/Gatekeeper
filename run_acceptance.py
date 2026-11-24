@@ -16,6 +16,7 @@ experiments.jsonl. On quota exhaustion it stops cleanly; run the SAME command af
 it continues from cache for free.
 """
 import argparse
+import json
 import os
 import sys
 
@@ -51,7 +52,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default="config.json")
     ap.add_argument("--yes", action="store_true",
-                    help="I accept the request budget and confirm the AI Studio project has NO billing")
+                    help="I accept the request budget and the spending limit (Rs 0 free tier, or max_spend_inr)")
     ap.add_argument("--mock", action="store_true", help="SIMULATED dry run (no network)")
     ap.add_argument("--honest-rounds", type=int, default=4)
     args = ap.parse_args()
@@ -63,8 +64,19 @@ def main():
     print(f"  worst case {b['worst_case']} requests, typical about {b['typical']} "
           f"(~{b['days_at_500_per_day']} days of the 500/day Flash-Lite free quota; resumable, cached)")
     if not args.mock and not args.yes:
-        print("\nNothing was called. Confirm that your AI Studio project has NO billing attached, then run:\n"
-              "    python run_acceptance.py --yes")
+        try:
+            cfg = json.load(open(args.config, encoding="utf-8"))
+        except (FileNotFoundError, ValueError):
+            cfg = {}
+        from gk.providers import PAID_PROVIDERS, DEFAULT_USD_INR, call_cost_usd
+        if cfg.get("provider") in PAID_PROVIDERS:
+            rate = cfg.get("usd_inr", DEFAULT_USD_INR)
+            typ = b["typical"] * call_cost_usd(cfg["model"], 450, 4) * rate               # priced per call
+            worst = b["worst_case"] * call_cost_usd(cfg["model"], 900, 16) * rate
+            print(f"  PAID model {cfg['model']}: about Rs {typ:.2f} typical, at most Rs {worst:.2f} "
+                  f"(+ about 20 proposer calls, under Rs 1). Hard cap: Rs {cfg.get('max_spend_inr')}.")
+        print("\nNothing was called. Confirm the spending limit (Rs 0 with no billing for Gemini, or the "
+              "max_spend_inr cap for a paid model), then run:\n    python run_acceptance.py --yes")
         sys.exit(2)
 
     if args.mock:
@@ -75,8 +87,9 @@ def main():
         print("\n*** SIMULATED RUN: mock models, nothing real is measured ***")
     else:
         from app import _has_key
-        if not _has_key():
-            sys.exit("No GEMINI_API_KEY in .env or the environment.")
+        from app import key_name
+        if not _has_key(args.config):
+            sys.exit(f"No {key_name(args.config)} in .env or the environment.")
         outdir, log, calls_path = "acceptance", "experiments.jsonl", "calls.jsonl"
         stack = make_real(args.config, calllog=CallLog(calls_path))
         used_up = stack.exhausted()

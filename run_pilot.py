@@ -26,10 +26,12 @@ from gk.env import MiniCraft
 from gk.evaluator import suite_opts, task_for, true_score
 from gk.harness import Harness
 from gk.providers import (CachedProvider, Completion, Provider, QuotaExhausted, RateLimitError,
-                          TransientError, check_spend_cap, free_tier_allowlist)
+                          TransientError, check_spend_cap, allowlist_for, PAID_PROVIDERS,
+                          DEFAULT_USD_INR, call_cost_usd)
 from gk.real import REAL_SUITES, RealEvaluator
 
-ORDER = ("regression", "report", "train", "held", "canary")   # cheapest, most decisive first
+ORDER = ("regression", "report", "train", "held", "canary")
+PROMPT_TOKENS_TYPICAL, PROMPT_TOKENS_WORST = 450, 900   # pessimistic: measured v4 prompts are ~210-240 tokens   # cheapest, most decisive first
 OUT = "pilot"
 
 
@@ -65,8 +67,8 @@ def worlds(name: str):
 
 def dry_run(cfg: dict) -> dict:
     """Replay the original harness on every pilot suite against the saved cache, offline."""
-    model = cfg["model"]
-    cp = _ReadOnlyCache(_OfflineInner("gemini", model), f"cache_gemini_{model}.jsonl")
+    model, kind = cfg["model"], cfg.get("provider", "gemini")
+    cp = _ReadOnlyCache(_OfflineInner(kind, model), f"cache_{kind}_{model}.jsonl")
     ev = RealEvaluator(cp, REAL_SUITES)
     h = Harness.initial()
     rows, saved_total, remaining_total = [], 0, 0
@@ -139,8 +141,9 @@ def real_run(cfg_path: str) -> None:
     from gk.calllog import CallLog
     from gk.setup import make_real
     from gk.lab import resume_hint
-    if not _has_key():
-        sys.exit("No GEMINI_API_KEY in .env or the environment.")
+    if not _has_key(cfg_path):
+        from app import key_name
+        sys.exit(f"No {key_name(cfg_path)} in .env or the environment.")
     stack = make_real(cfg_path, calllog=CallLog("calls.jsonl"))
     used_up = stack.exhausted()
     if used_up:
@@ -185,13 +188,13 @@ def main() -> None:
     ap.add_argument("--config", default="config.json")
     ap.add_argument("--dry-run", action="store_true", help="offline: count saved and remaining requests")
     ap.add_argument("--yes", action="store_true",
-                    help="REAL run; I confirm my AI Studio project has NO billing attached")
+                    help="REAL run; I confirm the spending limit (Rs 0 free tier, or max_spend_inr for a paid model)")
     args = ap.parse_args()
     cfg = json.load(open(args.config, encoding="utf-8"))
     check_spend_cap(cfg)
-    allowed = free_tier_allowlist(cfg.get("allowed_models"))
+    allowed = allowlist_for(cfg)
     if cfg["model"] not in allowed:
-        sys.exit(f"model {cfg['model']} is not on the free-tier allowlist {list(allowed)}")
+        sys.exit(f"model {cfg['model']} is not on the allowlist {list(allowed)}")
     if args.dry_run or not args.yes:
         d = dry_run(cfg)
         print(f"Pilot request plan (player {d['model']}, original harness, offline replay of the cache):")
@@ -203,8 +206,16 @@ def main() -> None:
         print(f"  TOTAL: {d['saved_steps']} steps already saved (free); at most "
               f"{d['remaining_requests_max']} new requests ({d['remaining_requests_max'] / rpd:.0%} "
               f"of one day's {rpd}). Proposer calls: 0.")
-        print("\nNothing was sent. To run it for real (free tier, after the daily reset):\n"
-              "    python run_pilot.py --yes")
+        if cfg.get("provider") in PAID_PROVIDERS:
+            n, rate = d["remaining_requests_max"], cfg.get("usd_inr", DEFAULT_USD_INR)
+            worst = n * call_cost_usd(cfg["model"], PROMPT_TOKENS_WORST, 16) * rate          # priced per call
+            typ = int(n * .7) * call_cost_usd(cfg["model"], PROMPT_TOKENS_TYPICAL, 4) * rate
+            print(f"  PAID model {cfg['model']}: about Rs {typ:.2f} typical, at most Rs {worst:.2f} for this pilot "
+                  f"(cap Rs {cfg['max_spend_inr']}; spend so far is in spend_ledger.json).")
+            print("\nNothing was sent. To run it for real:\n    python run_pilot.py --yes")
+        else:
+            print("\nNothing was sent. To run it for real (free tier, after the daily reset):\n"
+                  "    python run_pilot.py --yes")
         if not args.dry_run:
             sys.exit(2)
         return

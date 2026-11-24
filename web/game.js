@@ -86,11 +86,16 @@
     g.lineWidth = 3; g.strokeStyle = "rgba(0,0,0,.6)"; g.strokeText(s, x, y); g.fillStyle = col; g.fillText(s, x, y); g.textAlign = "left"; g.lineWidth = 1; }
   const ITEMS = ["wood", "stone", "iron", "table", "pickaxe", "sword"];
 
-  function modeInfo(mode, ctx, cached, latency) {
+  function modelName(model) {   // the model recorded in the backend event, in plain words
+    const m = String(model || "");
+    if (m.startsWith("claude-haiku")) return "Claude Haiku"; if (m.startsWith("claude")) return "Claude";
+    if (m.startsWith("gemini")) return "Gemini"; return m || "AI model";
+  }
+  function modeInfo(mode, ctx, cached, latency, model) {
     let m;
     if (mode === "human") m = { t: "HUMAN PLAYER · no AI, no API calls", c: "#c9a7ff" };
     else if (mode === "mock") m = { t: "MOCK · simulated agent, no model called", c: "#ffcf66" };
-    else if (mode === "real") m = { t: "REAL GEMINI · " + (cached ? "cached reply" : "LIVE call" + (latency ? " " + latency + " ms" : "")), c: "#6fe3a1" };
+    else if (mode === "real") m = { t: "REAL " + modelName(model).toUpperCase() + " · " + (cached ? "cached reply" : "LIVE call" + (latency ? " " + latency + " ms" : "")), c: "#6fe3a1" };
     else m = { t: ctx === "human" ? "HUMAN PLAYER" : ctx === "replay" ? "REPLAY" : "IDLE", c: "#aab4c2" };
     if (ctx === "replay" && mode) m = { t: "REPLAY · " + m.t, c: "#9fc2ff" };
     return m;
@@ -155,7 +160,7 @@
       const st = e.static || { w: 26, h: 15, walls: [], water: [], start: [12, 7] };
       this.E = { st, seed: e.seed, task: e.task, mode: e.mode, suite: e.suite, label: e.label, version: e.version, hazard: e.hazard, max_steps: e.max_steps, episode: e.episode };
       this.D = JSON.parse(JSON.stringify(e.world || {}));
-      this.S = { mode: e.mode, suite: e.suite, label: e.label, version: e.version, seed: e.seed, task: e.task, max_steps: e.max_steps, step: e.step || 0,
+      this.S = { mode: e.mode, model: e.model, suite: e.suite, label: e.label, version: e.version, seed: e.seed, task: e.task, max_steps: e.max_steps, step: e.step || 0,
         inventory: Object.assign({}, e.inventory || {}), outcome: "", episode: e.episode, needed: (e.world || {}).needed || [] };
       this.ground = this.buildGround(st, e.seed); this.cur = null; this.parts = []; this.floats = [];
       const p = this.D.player || st.start; this.pp = { x: p[0], y: p[1] }; this.zp = null; this.face = "down";
@@ -168,7 +173,7 @@
       // a decision: play the engine's frames one by one
       const ev = f.ev; if (!this.E || this.E.seed !== ev.seed) this.startEpisode(Object.assign({}, ev, { world: ev.world, step: (ev.step || 1) - 1 }));
       this.S.decision = { raw: ev.raw, action: ev.action, mode: ev.mode, cached: ev.cached, latency: ev.latency_ms, call: ev.call_id };
-      this.S.step = ev.step; this.S.mode = ev.mode;
+      this.S.step = ev.step; this.S.mode = ev.mode; if (ev.model) this.S.model = ev.model;
       this.anim = { f, frames: ev.trace || [], i: -1, t: 0, dur: 0, age: 0, from: { x: this.pp.x, y: this.pp.y }, zfrom: this.zp && { ...this.zp } };
       this.emit("decide", ev);
       this.nextFrame();
@@ -341,7 +346,7 @@
       g.restore();
     }
     drawBubble(ev) {
-      const g = this.g, human = ev.mode === "human", who = human ? "You" : ev.mode === "mock" ? "Mock agent" : "Gemini";
+      const g = this.g, human = ev.mode === "human", who = human ? "You" : ev.mode === "mock" ? "Mock agent" : modelName(ev.model);
       const raw = String(ev.raw == null ? "" : ev.raw).replace(/\s+/g, " ").trim().slice(0, 34);
       const line = human ? `${who}: ${ev.action}` : `${who}: "${raw}"` + (raw.toLowerCase() === ev.action ? "" : ` → ${ev.action}`);
       g.font = "700 15px system-ui,Segoe UI,sans-serif"; const w = g.measureText(line).width + 22;
@@ -353,7 +358,7 @@
     }
     drawHud() {
       const g = this.g, S = this.S, D = this.D, dec = S && S.decision;
-      const m = modeInfo(S && S.mode, this.context, dec && dec.cached, dec && dec.latency);
+      const m = modeInfo(S && S.mode, this.context, dec && dec.cached, dec && dec.latency, S && S.model);
       g.font = "800 13px system-ui,Segoe UI,sans-serif"; const mw = g.measureText(m.t).width + 22;
       g.fillStyle = "rgba(14,17,22,.78)"; rr(g, 10, 10, mw + 6, 30, 15); g.fill(); g.fillStyle = m.c; rr(g, 13, 13, mw, 24, 12); g.fill(); g.fillStyle = "#10141a"; g.fillText(m.t, 24, 30);
       if (!S || !D) { txt(g, "Press “Start a new game” to watch the AI, or open “Play yourself”.", VW / 2, VH / 2, 18, "#e6eaf0", "center"); return; }
@@ -412,4 +417,5 @@
     }
   }
   global.GameView = GameView;
+  global.gkModelName = modelName;
 })(window);

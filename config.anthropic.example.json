@@ -1,0 +1,8 @@
+{
+  "provider": "anthropic",
+  "model": "claude-haiku-5-5",
+  "rpm": 50,
+  "rpd": 20000,
+  "max_spend_inr": 300,
+  "usd_inr": 95
+}

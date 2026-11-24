@@ -123,15 +123,16 @@ class Runner:
         """-> (stack, None) or (None, (http_code, error_dict)). Real mode is guarded here."""
         if mode == "real":
             if not body.get("confirm_no_billing"):
-                return None, (400, {"error": "confirm that the AI Studio project has NO billing "
-                                             "attached (confirm_no_billing)"})
+                return None, (400, {"error": "confirm the spending limit first: Rs 0 (Gemini free tier, no "
+                                             "billing) or the max_spend_inr cap in config.json for a paid "
+                                             "model (confirm_no_billing)"})
             try:
                 stack = make_real(os.path.join(self.workdir, self.config_path), self.workdir,
                                   CallLog(os.path.join(self.workdir, "calls.jsonl")))
             except (FileNotFoundError, ValueError, KeyError) as e:
                 return None, (400, {"error": f"cannot start real mode: {e}"})
-            if not _has_key():
-                return None, (400, {"error": "no GEMINI_API_KEY found in .env or the environment"})
+            if not _has_key(self.config_path):
+                return None, (400, {"error": f"no {key_name(self.config_path)} found in .env or the environment"})
             used_up = stack.exhausted()
             if used_up:
                 return None, (429, {"error": f"STOP: free quota used up ({used_up}). {resume_hint()}"})
@@ -352,10 +353,21 @@ def _live_provider(stack):
     return LoggedProvider(limited, stack.calllog, "player") if stack.calllog else limited
 
 
-def _has_key() -> bool:
+KEY_NAMES = {"gemini": "GEMINI_API_KEY", "anthropic": "ANTHROPIC_API_KEY"}
+
+
+def key_name(config_path: str = "config.json") -> str:
+    try:
+        with open(config_path, encoding="utf-8") as f:
+            return KEY_NAMES.get(json.load(f).get("provider", "gemini"), "GEMINI_API_KEY")
+    except (FileNotFoundError, ValueError):
+        return "GEMINI_API_KEY"
+
+
+def _has_key(config_path: str = "config.json") -> bool:
     from gk.dotenv import load_dotenv
     load_dotenv()
-    return bool(os.environ.get("GEMINI_API_KEY"))
+    return bool(os.environ.get(key_name(config_path)))
 
 
 def _host_ok(value: str | None) -> bool:

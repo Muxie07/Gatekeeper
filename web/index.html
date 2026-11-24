@@ -49,9 +49,9 @@ pre{white-space:pre-wrap;margin:2px 0;word-break:break-word}
   <nav><button id="tLive" class="on">Watch the AI</button> <button id="tHuman">Play yourself</button> <button id="tHist">History (replay)</button></nav>
   <span style="flex:1"></span>
   <span id="controls">
-  <label>mode <select id="mode"><option value="mock">mock (simulated)</option><option value="real">real (Gemini)</option></select></label>
+  <label>mode <select id="mode"><option value="mock">mock (simulated)</option><option value="real">real (model in config.json)</option></select></label>
   <label>max rounds <input id="rounds" type="number" min="1" max="6" value="2" style="width:60px"></label>
-  <label id="confirmWrap" class="hidden"><input id="confirm" type="checkbox"> AI Studio project has no billing</label>
+  <label id="confirmWrap" class="hidden"><input id="confirm" type="checkbox"> I confirm the spending limit (Rs 0 free tier, or max_spend_inr)</label>
   <button id="start" class="go">Start</button><button id="pause">Pause</button><button id="resume">Resume</button><button id="stop">Stop</button>
   <button id="play" title="Play ONE new game with the current harness on a fresh world; every step is a live call in real mode">Start a new game</button>
   </span>
@@ -66,7 +66,7 @@ pre{white-space:pre-wrap;margin:2px 0;word-break:break-word}
 <label id="gFollowWrap"><input id="gFollow" type="checkbox" checked> follow live</label><span id="gInfo" class="mut mono"></span></div></div>
 <div class="side" id="gSide"><h3>Who is playing</h3><div id="gWho" class="mut">nothing yet</div>
 <div id="gStory" class="story"></div>
-<h3>Modes</h3><div class="modekey mut"><span class="badge b-real">REAL GEMINI</span><span class="badge b-mock">MOCK</span><span class="badge b-replay">REPLAY</span><span class="badge b-human">HUMAN</span><div style="margin-top:4px">Everything in the picture is the Python engine's own record: positions, paths, trees and stones left, the table, the shelter and the zombie, tick by tick. The browser only plays it back. There are no health points: a zombie that reaches you steals your wood and then wrecks your table.</div></div></div>
+<h3>Modes</h3><div class="modekey mut"><span class="badge b-real">REAL MODEL</span><span class="badge b-mock">MOCK</span><span class="badge b-replay">REPLAY</span><span class="badge b-human">HUMAN</span><div style="margin-top:4px">Everything in the picture is the Python engine's own record: positions, paths, trees and stones left, the table, the shelter and the zombie, tick by tick. The browser only plays it back. There are no health points: a zombie that reaches you steals your wood and then wrecks your table.</div></div></div>
 </div></section></main>
 <main>
   <section class="card"><h2>Game state</h2><div id="game" class="mut">Nothing running. Press Start, or “Start a new game”.</div></section>
@@ -127,6 +127,8 @@ function renderQuota(q){
     if(lim){const bar=el("div","bar");const i=el("i");i.style.width=Math.min(100,100*used/lim)+"%";if(used>=lim)i.className="hot";bar.appendChild(i);r.appendChild(bar);
       if(used>=lim)r.appendChild(el("div","bad","STOP: free daily quota used up"))}
     b.appendChild(r)});
+  if(q.spend){const r=el("div","row");r.appendChild(el("div","",`money spent (paid model): ₹${q.spend.spent_inr.toFixed(2)} of ₹${q.spend.cap_inr} cap`));
+    const bar=el("div","bar");const i=el("i");i.style.width=Math.min(100,100*q.spend.spent_inr/q.spend.cap_inr)+"%";if(q.spend.spent_inr>=q.spend.cap_inr)i.className="hot";bar.appendChild(i);r.appendChild(bar);b.appendChild(r)}
   if(stoppedReason.startsWith("STOP"))b.appendChild(el("div","bad",stoppedReason));
 }
 
@@ -263,7 +265,7 @@ $("play").onclick=()=>post("/play",mode());
 ["pause","resume","stop"].forEach(a=>$(a).onclick=()=>post("/control",{action:a}));
 $("mode").onchange=async()=>{$("confirmWrap").classList.toggle("hidden",$("mode").value!=="real");
   if($("mode").value==="real"){const b=await (await fetch("/budget")).json();
-    banner(`Real mode uses your FREE Gemini quota. One round ≈ ${b.first_round_typical} requests typical (${b.first_round_worst} worst case) for the first round, ≈${b.later_round_typical} later; “Start a new game” uses about 10 live requests. Confirm the box, then Start.`,"warn")}else banner("")};
+    banner(`Real mode calls the model in config.json (Gemini: free daily quota; Claude Haiku: paid, capped by max_spend_inr). One round ≈ ${b.first_round_typical} requests typical (${b.first_round_worst} worst case) for the first round, ≈${b.later_round_typical} later; “Start a new game” uses about 10 live requests. Confirm the box, then Start.`,"warn")}else banner("")};
 function tab(which){const w=which===true?"hist":which===false?"live":which;
   ["live","human","hist"].forEach(k=>$(k).classList.toggle("hidden",k!==w));
   $("tLive").classList.toggle("on",w==="live");$("tHuman").classList.toggle("on",w==="human");$("tHist").classList.toggle("on",w==="hist");
@@ -319,12 +321,12 @@ function tagFor(S){if(!S)return el("span","mut","–");if(S.mode==="human")retur
 function showSide(S,ev,phase){
   const w=$("gWho");w.textContent="";const st=$("gStory");st.textContent="";if(!S){w.textContent="nothing yet";return}
   w.appendChild(tagFor(Object.assign({},S,ev?{cached:ev.cached,latency_ms:ev.latency_ms,step:ev.step}:{})));
-  w.appendChild(document.createTextNode(" "+[S.mode==="real"?"Gemini (real model)":S.mode==="mock"?"mock agent (simulated, no model)":S.mode==="human"?"you":"?",
+  w.appendChild(document.createTextNode(" "+[S.mode==="real"?gkModelName(S.model)+" (real model"+(String(S.model||"").startsWith("claude")?", paid":"")+")":S.mode==="mock"?"mock agent (simulated, no model)":S.mode==="human"?"you":"?",
     S.mode==="human"?"":"harness "+S.version,S.label,(S.suite||"")+" world "+S.seed].filter(Boolean).join(" · ")));
   const row=(k,v,cls)=>{st.appendChild(el("b","",k));st.appendChild(el("div",cls||"",v))};
   row("Objective",`craft a ${S.task}`+(S.success?" — done":""));
   if(ev&&ev.step){
-    row("Decision",S.mode==="human"?`you chose “${ev.action}”`:`${S.mode==="mock"?"mock agent":"Gemini"} replied ${JSON.stringify(ev.raw)} → ${ev.action}`,"mono");
+    row("Decision",S.mode==="human"?`you chose “${ev.action}”`:`${S.mode==="mock"?"mock agent":gkModelName(S.model)} replied ${JSON.stringify(ev.raw)} → ${ev.action}`,"mono");
     row("Action",ev.plan?"engine: "+ev.plan:phase==="decide"?"engine: carrying out “"+ev.action+"”…":"engine: no movement (the action failed on the spot)");
     row("Result",phase==="decide"?"…":ev.outcome.replace(/^Last action '[^']+' /,""),phase==="decide"?"mut":(/failed/.test(ev.outcome)?"bad":"ok"));
   }
