@@ -11,3 +11,4 @@ acceptance_simulated/
 calls.mock.jsonl
 events.mock.jsonl
 ui_check/
+demo_counter.json
