@@ -42,7 +42,28 @@ class Completion:
 
 
 class RateLimitError(Exception):
-    """HTTP 429 from the provider."""
+    """HTTP 429 from the provider. `per_minute` is True only when the provider SAID it is a short
+    (per-minute) limit; then `retry_after` is how long it asked us to wait. Anything else stops."""
+
+    def __init__(self, msg: str = "", retry_after: float | None = None, per_minute: bool = False):
+        super().__init__(msg)
+        self.retry_after, self.per_minute = retry_after, per_minute
+
+
+def _gemini_429(body: str) -> Exception:
+    """Read Google's 429 details: a per-DAY quota stops the run; a per-MINUTE one can be waited out."""
+    import re
+    daily = "PerDay" in body
+    minute = "PerMinute" in body
+    m = re.search(r'"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"', body)
+    delay = float(m.group(1)) if m else None
+    qid = re.search(r'"quotaId"\s*:\s*"([^"]+)"', body)
+    what = qid.group(1) if qid else "unknown quota"
+    if daily:
+        return QuotaExhausted(f"Gemini free DAILY quota used up ({what}); resets midnight Pacific.")
+    if minute or delay is not None:
+        return RateLimitError(f"Gemini per-minute limit ({what})", retry_after=delay or 60.0, per_minute=True)
+    return RateLimitError(f"HTTP 429 ({what})")
 
 
 class TransientError(Exception):
@@ -102,7 +123,11 @@ class GeminiProvider(Provider):
                 data = json.load(r)
         except urllib.error.HTTPError as e:
             if e.code == 429:
-                raise RateLimitError(str(e)) from e
+                try:
+                    body = e.read().decode("utf-8", "replace")
+                except Exception:
+                    body = ""
+                raise _gemini_429(body) from e
             if e.code in (500, 502, 503, 504):
                 raise TransientError(f"HTTP {e.code} from provider (temporary)") from e
             raise
@@ -151,8 +176,10 @@ class AnthropicProvider(Provider):
                 detail = e.read().decode("utf-8", "replace")[:300]
             except Exception:
                 detail = ""
-            if e.code == 429:
-                raise RateLimitError(f"HTTP 429 {detail}") from e
+            if e.code == 429:   # Anthropic 429s are short-term rate limits; it sends retry-after
+                ra = e.headers.get("retry-after") if e.headers else None
+                raise RateLimitError(f"HTTP 429 {detail}", retry_after=float(ra) if ra and ra.replace(".", "", 1).isdigit() else 30.0,
+                                     per_minute=True) from e
             if e.code in (500, 502, 503, 504, 529):
                 raise TransientError(f"HTTP {e.code} from provider (temporary)") from e
             if "credit balance" in detail.lower():
@@ -206,8 +233,10 @@ class OpenAIProvider(Provider):
             low = detail.lower()
             if "insufficient_quota" in low or "credit_balance" in low or "billing" in low:
                 raise QuotaExhausted("OpenAI credit balance used up; add credits in the API billing page") from e
-            if e.code == 429:
-                raise RateLimitError(f"HTTP 429 {detail}") from e
+            if e.code == 429:   # billing problems were handled above; this is a short-term rate limit
+                ra = e.headers.get("retry-after") if e.headers else None
+                raise RateLimitError(f"HTTP 429 {detail}", retry_after=float(ra) if ra and ra.replace(".", "", 1).isdigit() else 30.0,
+                                     per_minute=True) from e
             if e.code in (500, 502, 503, 504):
                 raise TransientError(f"HTTP {e.code} from provider (temporary)") from e
             raise RuntimeError(f"OpenAI API HTTP {e.code}: {detail}") from e
@@ -222,15 +251,47 @@ class OpenAIProvider(Provider):
                           model_version=str(data.get("model", "")), response_id=str(data.get("id", "")))
 
 
+class _FileLock:
+    """Tiny cross-process lock (works on Windows and Linux): exclusive create of <path>.lock.
+    A lock left behind by a crashed process is treated as stale after 10 seconds."""
+
+    def __init__(self, path: str, stale: float = 10.0):
+        self.path, self.stale = path + ".lock", stale
+
+    def __enter__(self):
+        t0 = time.time()
+        while True:
+            try:
+                fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                os.close(fd)
+                return self
+            except FileExistsError:
+                try:
+                    if time.time() - os.path.getmtime(self.path) > self.stale:
+                        os.remove(self.path)
+                        continue
+                except OSError:
+                    pass
+                if time.time() - t0 > 30:
+                    raise TransientError(f"could not get {self.path}; another process holds it")
+                time.sleep(0.05)
+
+    def __exit__(self, *exc):
+        try:
+            os.remove(self.path)
+        except OSError:
+            pass
+
+
 class RateLimiter:
     """Enforces requests/minute and requests/day (day resets at midnight Pacific).
-    Counts are persisted so a restart cannot overspend the daily quota."""
+    Both counts live in the quota file, so every process using the same model and folder shares
+    them: two runs started at once cannot add up to more than `rpm` requests in a minute."""
 
     def __init__(self, rpm: int, rpd: int, state_path: str,
                  clock=time.time, sleep=time.sleep):
         self.rpm, self.rpd, self.path = rpm, rpd, state_path
         self.clock, self.sleep = clock, sleep
-        self.recent: deque[float] = deque()
 
     def _day(self) -> str:
         return datetime.fromtimestamp(self.clock(), ZoneInfo("America/Los_Angeles")).strftime("%Y-%m-%d")
@@ -246,37 +307,57 @@ class RateLimiter:
         return self._load().get(self._day(), 0)
 
     def acquire(self) -> None:
-        state, day = self._load(), self._day()
-        if state.get(day, 0) >= self.rpd:
-            raise QuotaExhausted(f"{self.rpd} requests/day used; resets midnight Pacific.")
-        now = self.clock()
-        while self.recent and now - self.recent[0] >= 60:
-            self.recent.popleft()
-        if len(self.recent) >= self.rpm:
-            self.sleep(60 - (now - self.recent[0]) + 0.05)
-        self.recent.append(self.clock())
-        state[day] = state.get(day, 0) + 1
-        with open(self.path, "w") as f:
-            json.dump(state, f)
+        for _ in range(4):   # bounded: re-check after a wait in case another process took the slot
+            with _FileLock(self.path):
+                state, day = self._load(), self._day()
+                if state.get(day, 0) >= self.rpd:
+                    raise QuotaExhausted(f"{self.rpd} requests/day used; resets midnight Pacific.")
+                now = self.clock()
+                recent = [t for t in state.get("_minute", []) if now - t < 60]
+                if len(recent) < self.rpm:
+                    recent.append(now)
+                    state["_minute"], state[day] = recent, state.get(day, 0) + 1
+                    with open(self.path, "w") as f:
+                        json.dump(state, f)
+                    return
+                wait = 60 - (now - min(recent)) + 0.05
+            self.sleep(max(wait, 0.05))
+        with _FileLock(self.path):   # after the bounded waits, record the request anyway
+            state, day = self._load(), self._day()
+            if state.get(day, 0) >= self.rpd:
+                raise QuotaExhausted(f"{self.rpd} requests/day used; resets midnight Pacific.")
+            state["_minute"] = [t for t in state.get("_minute", []) if self.clock() - t < 60] + [self.clock()]
+            state[day] = state.get(day, 0) + 1
+            with open(self.path, "w") as f:
+                json.dump(state, f)
 
 
 class LimitedProvider(Provider):
+    """Rate limiting + bounded retries. A 429 that the provider marks as a short (per-minute)
+    limit is waited out at most `rate_waits` times; any other 429 stops immediately."""
+
     def __init__(self, inner: Provider, limiter: RateLimiter, retries: int = 3,
-                 sleep=time.sleep):
+                 sleep=time.sleep, rate_waits: int = 2):
         self.inner, self.limiter, self.retries, self.sleep = inner, limiter, retries, sleep
+        self.rate_waits = rate_waits
         self.name, self.model = inner.name, inner.model
 
     def complete(self, prompt, system="", max_tokens=256):
-        for attempt in range(self.retries + 1):
+        transient = waits = 0
+        while True:
             self.limiter.acquire()  # failed attempts count too: assume the worst
             try:
                 return self.inner.complete(prompt, system, max_tokens)
-            except RateLimitError:
-                raise   # HTTP 429: stop and let the caller report when to resume; no retry loop
+            except RateLimitError as e:
+                if not e.per_minute or waits >= self.rate_waits:
+                    raise   # unknown or repeated 429: stop and let the caller report it
+                waits += 1
+                self.sleep(min(max(e.retry_after or 60.0, 5.0), 90.0) + 1.0)
             except TransientError:
-                if attempt == self.retries:
+                if transient >= self.retries:
                     raise
-                self.sleep(2 ** attempt * 5)
+                self.sleep(2 ** transient * 5)
+                transient += 1
 
 
 class FallbackProvider(Provider):

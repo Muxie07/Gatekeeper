@@ -90,6 +90,11 @@ def main():
         from app import key_name
         if not _has_key(args.config):
             sys.exit(f"No {key_name(args.config)} in .env or the environment.")
+        from gk.runlock import RunLock, RunLocked
+        try:
+            RunLock(".", "run_acceptance.py").acquire()
+        except RunLocked as e:
+            sys.exit(f"STOP: {e}")
         outdir, log, calls_path = "acceptance", "experiments.jsonl", "calls.jsonl"
         stack = make_real(args.config, calllog=CallLog(calls_path))
         used_up = stack.exhausted()
@@ -107,7 +112,7 @@ def main():
         except QuotaExhausted as e:
             stopped = f"STOP: quota exhausted ({e}). {resume_hint()}"
         except RateLimitError as e:
-            stopped = f"STOP: HTTP 429 ({e}). Not retrying. {resume_hint()}"
+            stopped = f"STOP: the provider kept refusing requests (HTTP 429: {e}). This is usually the PER-MINUTE limit, not the daily one: wait 2 minutes and run the same command again; finished work is cached."
         except TransientError as e:
             stopped = f"STOP: provider unavailable ({e}). Safe to resume; work is cached."
         phases[name] = "stopped"

@@ -12,3 +12,6 @@ calls.mock.jsonl
 events.mock.jsonl
 ui_check/
 demo_counter.json
+real_run.lock
+*.json.lock
+spend_ledger.json.lock

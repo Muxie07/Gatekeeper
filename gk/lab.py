@@ -362,7 +362,7 @@ class Lab:
         except QuotaExhausted as e:
             status = f"STOP: quota exhausted ({e}) {resume_hint()}"
         except RateLimitError as e:
-            status = f"STOP: HTTP 429 from the provider ({e}). Not retrying. {resume_hint()}"
+            status = f"STOP: the provider kept refusing requests (HTTP 429: {e}). This is usually the PER-MINUTE limit, not the daily one: wait 2 minutes and run the same command again; finished work is cached."
         except TransientError as e:
             status = f"STOP: provider temporarily unavailable ({e}). Safe to resume later; work is cached."
         self.emit("stopped", reason=status)

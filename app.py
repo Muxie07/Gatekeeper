@@ -126,6 +126,12 @@ class Runner:
                 return None, (400, {"error": "confirm the spending limit first: Rs 0 (Gemini free tier, no "
                                              "billing) or the max_spend_inr cap in config.json for a paid "
                                              "model (confirm_no_billing)"})
+            if getattr(self, "run_lock", None) is None:   # one real run per folder (CLI or this app)
+                from gk.runlock import RunLock, RunLocked
+                try:
+                    self.run_lock = RunLock(self.workdir, "app.py (real mode)").acquire()
+                except RunLocked as e:
+                    return None, (409, {"error": f"{e} (close the other run first)"})
             try:
                 stack = make_real(os.path.join(self.workdir, self.config_path), self.workdir,
                                   CallLog(os.path.join(self.workdir, "calls.jsonl")))
@@ -239,8 +245,11 @@ class Runner:
             ep = ev.episode(harness, seed, task, max_steps=14, hazard_p=0.5)
             self.post("demo_end", seed=seed, success=ep.success, steps=ep.steps, mistakes=ep.events,
                       mode=stack.mode)
-        except (QuotaExhausted, RateLimitError, TransientError) as e:
-            self.post("stopped", reason=f"STOP: {type(e).__name__}: {e}. {resume_hint()}")
+        except QuotaExhausted as e:
+            self.post("stopped", reason=f"STOP: quota used up ({e}). {resume_hint()}")
+        except (RateLimitError, TransientError) as e:
+            self.post("stopped", reason=f"STOP: {type(e).__name__}: {e}. Usually a per-minute limit or a "
+                                        "temporary outage: wait 2 minutes and try again.")
         except Exception as e:
             self.post("error", message=f"demo game failed: {type(e).__name__}: {e}")
         finally:

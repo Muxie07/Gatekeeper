@@ -144,6 +144,11 @@ def real_run(cfg_path: str) -> None:
     if not _has_key(cfg_path):
         from app import key_name
         sys.exit(f"No {key_name(cfg_path)} in .env or the environment.")
+    from gk.runlock import RunLock, RunLocked
+    try:
+        RunLock(".", "run_pilot.py").acquire()
+    except RunLocked as e:
+        sys.exit(f"STOP: {e}")
     stack = make_real(cfg_path, calllog=CallLog("calls.jsonl"))
     used_up = stack.exhausted()
     if used_up:
@@ -175,7 +180,7 @@ def real_run(cfg_path: str) -> None:
     except QuotaExhausted as e:
         report["status"] = f"STOP: quota exhausted ({e}). {resume_hint()}"
     except RateLimitError as e:
-        report["status"] = f"STOP: HTTP 429 ({e}). Not retrying. {resume_hint()}"
+        report["status"] = f"STOP: the provider kept refusing requests (HTTP 429: {e}). This is usually the PER-MINUTE limit, not the daily one: wait 2 minutes and run the same command again; finished work is cached."
     except TransientError as e:
         report["status"] = f"STOP: provider unavailable ({e}). Safe to resume; work is cached."
     report["calls"] = {"real_requests_this_run": stack.requests() - req0}
