@@ -1,0 +1,381 @@
+<!doctype html>
+<html lang="en"><head><link rel="icon" href="data:,"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" href="data:,">
+<title>Gatekeeper — live</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--ink:#1c2128;--mut:#667085;--line:#d9dee5;--ok:#1a7f4b;--bad:#c0392b;--warn:#b7791f;--acc:#2b5fd9}
+@media (prefers-color-scheme:dark){:root{--bg:#10141a;--card:#181e27;--ink:#e6eaf0;--mut:#8b96a5;--line:#2a3340;--ok:#4cc38a;--bad:#ef6f61;--warn:#e0b24f;--acc:#7aa2ff}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 system-ui,Segoe UI,sans-serif}
+header{display:flex;flex-wrap:wrap;gap:8px 10px;align-items:center;padding:10px 16px;background:var(--card);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+h1{font-size:16px;margin:0 8px 0 0}
+.badge{padding:3px 10px;border-radius:99px;font-weight:700;font-size:12px;border:1px solid;white-space:nowrap}
+.b-real{color:var(--ok);border-color:var(--ok)}.b-mock{color:var(--warn);border-color:var(--warn)}.b-replay{color:var(--acc);border-color:var(--acc)}.b-idle{color:var(--mut);border-color:var(--line)}
+button,select,input{font:inherit;color:inherit;background:var(--card);border:1px solid var(--line);border-radius:6px;padding:5px 10px}
+button{cursor:pointer}button.go{background:var(--acc);color:#fff;border-color:var(--acc)}button:disabled{opacity:.45;cursor:default}
+nav button.on{border-color:var(--acc);color:var(--acc);font-weight:700}
+main{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(340px,100%),1fr));gap:12px;padding:12px 16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px;min-width:0;overflow-wrap:anywhere}
+body{overflow-x:hidden}
+.card h2{font-size:13px;margin:0 0 8px;text-transform:uppercase;letter-spacing:.04em;color:var(--mut)}
+.wide{grid-column:1/-1}.mut{color:var(--mut)}.mono{font-family:ui-monospace,Consolas,monospace;font-size:12px}
+.log{max-height:300px;overflow:auto}.row{border-top:1px solid var(--line);padding:5px 0}.row:first-child{border-top:0}
+.ok{color:var(--ok)}.bad{color:var(--bad)}.warn{color:var(--warn)}.pend{color:var(--mut)}
+.bar{height:8px;background:var(--line);border-radius:4px;overflow:hidden}.bar i{display:block;height:100%;background:var(--acc)}.bar i.hot{background:var(--bad)}.bar i.mutc{background:var(--mut)}
+.inv span{display:inline-block;margin:2px 8px 2px 0;padding:2px 8px;border:1px solid var(--line);border-radius:6px}
+.check{padding:4px 0;border-top:1px solid var(--line)}.check:first-of-type{border-top:0}.check b{display:inline-block;min-width:130px}.check .sub{margin-left:0;color:var(--mut);font-size:12px}
+.node{padding:2px 4px;white-space:normal;word-break:break-word;cursor:pointer;border-radius:4px}.node:hover{background:var(--bg)}.node.sel{outline:1px solid var(--acc)}
+.pill{font-size:11px;padding:1px 7px;border-radius:99px;border:1px solid}
+.tag{font-size:11px;font-weight:700;padding:1px 6px;border-radius:4px;border:1px solid;margin-right:4px}
+.t-live{color:var(--ok);border-color:var(--ok)}.t-cached{color:var(--mut);border-color:var(--mut)}.t-sim{color:var(--warn);border-color:var(--warn)}
+table{border-collapse:collapse;width:100%}#ba{overflow-x:auto}#ba td,#ba th{white-space:nowrap;word-break:normal}td,th{border-top:1px solid var(--line);padding:4px 6px;text-align:left;vertical-align:top}th{color:var(--mut);font-weight:600}
+pre{white-space:pre-wrap;margin:2px 0;word-break:break-word}
+#banner{margin:8px 16px 0;padding:8px 12px;border-radius:8px;display:none;border:1px solid}
+#controls{display:contents}#controls.hidden,.hidden{display:none}
+.pbar{display:grid;grid-template-columns:90px 1fr 60px;gap:6px;align-items:center;font-size:12px;margin:2px 0}
+.verdict{margin-top:8px;padding:8px 10px;border-radius:8px;border:1px solid;font-weight:700}
+.world{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:12px;align-items:start}
+.world canvas{width:100%;height:auto;aspect-ratio:16/9;border-radius:8px;display:block;background:#1b2330;image-rendering:auto}
+.gctl{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:8px}
+.side h3{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--mut);margin:10px 0 4px}.side h3:first-child{margin-top:0}
+.acts{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}.acts button{min-width:118px}
+.story{display:grid;grid-template-columns:86px 1fr;gap:3px 8px;margin-top:8px;font-size:13px}.story b{color:var(--mut);font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.03em;padding-top:2px}
+.modekey span{display:inline-block;margin:2px 6px 2px 0}
+.b-human{color:#8e5bd8;border-color:#8e5bd8}
+@media (max-width:1150px){.world{grid-template-columns:1fr}}
+@media (max-width:600px){header{padding:8px 10px}main{padding:8px 10px;grid-template-columns:1fr}}
+body[data-tab=human] #replayCtl,body[data-tab=hist] #replayCtl,body[data-tab=human] #status,body[data-tab=hist] #status{display:none}</style></head><body>
+<script>window.GK_STATIC=true</script>
+<script src="game.js"></script>
+<script src="shim.js"></script>
+<header>
+  <h1>Gatekeeper</h1><span id="badge" class="badge b-idle">IDLE</span><span id="status" class="mut">idle</span>
+  <nav><button id="tHuman" class="on">1 · Play it yourself</button> <button id="tLive">2 · Watch an agent + the gate (recorded)</button> <button id="tHist">3 · Honest summary</button></nav>
+  <span style="flex:1"></span>
+  <span id="controls" class="hidden">
+  <label>mode <select id="mode"><option value="mock">mock (simulated)</option><option value="real">real (model in config.json)</option></select></label>
+  <label>max rounds <input id="rounds" type="number" min="1" max="6" value="2" style="width:60px"></label>
+  <label id="confirmWrap" class="hidden"><input id="confirm" type="checkbox"> I confirm the spending limit (Rs 0 free tier, or max_spend_inr)</label>
+  <button id="start" class="go">Start</button><button id="pause">Pause</button><button id="resume">Resume</button><button id="stop">Stop</button>
+  <button id="play" title="Play ONE new game with the current harness on a fresh world; every step is a live call in real mode">Start a new game</button>
+  </span>
+  <span id="replayCtl" class="hidden"><label>speed <select id="speed"><option value="150">1×</option><option value="40">4×</option><option value="0">instant</option></select></label> <button id="restart">Restart replay</button></span>
+</header>
+<div id="intro" style="padding:10px 16px;border-bottom:1px solid var(--line);max-width:1100px"><b>Gatekeeper</b> — a promotion gate for self-improving LLM agents. An agent may only change its own instructions if the change survives held-out worlds, a placebo, a regression suite, an integrity check and a cost check. <span class="mut">Start with the game: it is the same Python engine the AI plays, running in your browser. Most people lose the first time (a zombie arrives at a fixed tick).</span></div>
+<div id="banner"></div>
+<div id="live">
+<main style="padding-bottom:0"><section class="card wide" id="worldCard"><h2>MiniCraft world — what the agent is doing right now</h2>
+<div class="world"><div><canvas id="world" width="960" height="540" aria-label="MiniCraft game world"></canvas>
+<div class="gctl"><button id="gPause">Pause view</button><button id="gStep">Step ▸</button><button id="gSkip" title="Jump to the next game">Next game ⏭</button><button id="gMoment" title="Jump to the next lesson, gate decision or rollback">Next lesson / decision ⏭⏭</button>
+<label>speed <select id="gSpeed"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option><option value="8">8×</option></select></label>
+<label id="gFollowWrap"><input id="gFollow" type="checkbox" checked> follow live</label><span id="gInfo" class="mut mono"></span></div></div>
+<div class="side" id="gSide"><h3>Who is playing</h3><div id="gWho" class="mut">nothing yet</div>
+<div id="gStory" class="story"></div>
+<h3>Modes</h3><div class="modekey mut"><span class="badge b-real">REAL MODEL</span><span class="badge b-mock">MOCK</span><span class="badge b-replay">REPLAY</span><span class="badge b-human">HUMAN</span><div style="margin-top:4px">Everything in the picture is the Python engine's own record: positions, paths, trees and stones left, the table, the shelter and the zombie, tick by tick. The browser only plays it back. There are no health points: a zombie that reaches you steals your wood and then wrecks your table.</div></div></div>
+</div></section></main>
+<main>
+  <section class="card"><h2>Game state</h2><div id="game" class="mut">Nothing running. Press Start, or “Start a new game”.</div></section>
+  <section class="card"><h2>Quota meter</h2><div id="quota" class="mut">–</div><div id="budget" class="mut mono" style="margin-top:6px"></div></section>
+  <section class="card" style="grid-column:span 2"><h2>Before / after (unseen report worlds)</h2><div id="ba" class="mut">Measured at the start (original) and the end (current).</div></section>
+  <section class="card wide"><h2>Agent decisions (observation → raw reply → action → outcome)</h2><div id="decisions" class="log mono"></div></section>
+  <section class="card"><h2>Mistakes (from the game's failure feedback)</h2><div id="mistakes" class="log"></div></section>
+  <section class="card"><h2>Analysis / proposal</h2><div id="proposal" class="mut">–</div></section>
+  <section class="card"><h2>Harness: versions &amp; diff (click a node)</h2><div id="harness" class="mut">–</div><div id="nodeInfo" class="mono" style="margin-top:8px"></div></section>
+  <section class="card"><h2>Gate panel</h2><div id="gate" class="mut">No candidate yet.</div></section>
+  <section class="card wide"><h2>Event log</h2><div id="events" class="log mono"></div></section>
+</main></div>
+<div id="human" class="hidden"><main><section class="card wide"><h2>Play yourself — <span class="badge b-human">HUMAN · no AI, no API calls</span></h2>
+<div class="world"><div><canvas id="hworld" width="960" height="540" aria-label="MiniCraft world you control"></canvas>
+<div class="acts" id="hActs"></div><div class="gctl"><button id="hNew" class="go">New world</button><span class="mut">keys 1–7 pick an action</span></div></div>
+<div class="side"><h3>How it works</h3><div class="mut">You choose the action; the same Python MiniCraft engine the AI plays decides what happens. Nothing is sent to any model and no quota is used. Same rules the AI faces: recipes are not told to you, failures explain the rule.</div>
+<h3>Game engine says</h3><div id="hState" class="mut">Press “New world”.</div></div></div></section></main></div>
+<div id="hist" class="hidden"><main><section class="card wide"><h2>Honest summary — what is real and what is not</h2><div>
+<h3>REAL</h3><ul>
+<li><b>The game.</b> "Play it yourself" runs <code>gk/env.py</code> (the exact engine file the agent plays) in your browser via Pyodide. No server, no model, no quota.</li>
+<li><b>A real model baseline.</b> The unmodified agent harness was played by a real model, <code>gemini-3.5-flash-lite</code>, free tier, in 42 games on this engine (v4): regression 83% (6 games), report 60% (10), train 67% (6), held-out 38% (16), canary 50% (4). Its most common mistakes: not collecting enough materials, a zombie raid stealing its wood, and going to the mine without a pickaxe.</li>
+<li><b>The gate.</b> Held-out paired permutation test, placebo, regression, integrity and cost checks, thresholds frozen in <code>prereg/PREREG.md</code> before the real runs.</li></ul>
+<h3>SIMULATED (labelled everywhere it appears)</h3><ul>
+<li>The recorded run in tab 2 is a replay of a <b>mock</b> run: a scripted stand-in agent and proposer, so the agent's moves, lessons and gate numbers shown there are <b>not</b> real model output.</li></ul>
+<h3>NOT DONE YET</h3><ul>
+<li>No real lesson written by a real model has been through the gate yet. The full real experiment (an accepted improvement, a rejected placebo, a rollback, original vs improved on unseen worlds) has not been run, so I make no such claim. The older v2 report is kept at <a href="report.html">report.html</a> and is from an earlier, simpler version of the game.</li></ul>
+<h3>Limits</h3><ul><li>Small samples (tens of games per suite), one game family, one weak free-tier player model. Treat the baseline numbers as a starting point, not a benchmark.</li></ul>
+<p class="mut">Code: <a href="https://github.com/Muxie07/gatekeeper">github.com/Muxie07/gatekeeper</a></p>
+</div></section></main></div>
+<script>
+const $=id=>document.getElementById(id);
+const el=(t,c,x)=>{const e=document.createElement(t);if(c)e.className=c;if(x!==undefined)e.textContent=x;return e};
+const CHECKS=["allowlist","held-out gain","beats placebo","regression suite","integrity","canary","cost"];
+const ICON={wood:"🪵",stone:"🪨",iron:"🔩",table:"🪑",pickaxe:"⛏️",sword:"🗡️"};
+const REPLAY=new URLSearchParams(location.search).get("replay")||"replay.json";
+let lastId=0,cur={},stoppedReason="",es=null,nodes={},nodeInfo={},curVersion="",lessons=[],selNode="",reports={},verLessons={},REPLAY_SIM=false;
+
+function setBadge(text,mode){if(window.GK_TAB==="human"&&mode!=="human")return;if(window.GK_TAB==="hist"&&text!=="SUMMARY")return;const b=$("badge");b.textContent=text;b.className="badge "+({real:"b-real",mock:"b-mock",replay:"b-replay",human:"b-human"}[mode]||"b-idle")}
+function banner(msg,kind){const b=$("banner");b.style.display=msg?"block":"none";b.textContent=msg;b.style.color=`var(--${kind||"warn"})`;b.style.borderColor=`var(--${kind||"warn"})`}
+function pushRow(box,node,max){box.insertBefore(node,box.firstChild);while(box.children.length>(max||200))box.removeChild(box.lastChild)}
+function callTag(e){ // LIVE (fresh call, latency) / CACHED / SIMULATED, straight from the call log fields
+  if(e.mode==="mock")return el("span","tag t-sim","SIMULATED");
+  if(e.cached)return el("span","tag t-cached","CACHED");
+  return el("span","tag t-live","LIVE · "+(e.latency_ms||0)+" ms")}
+
+function renderGame(g){
+  const b=$("game");b.textContent="";if(!g||(!g.seed&&g.seed!==0)){b.textContent="Waiting for an episode…";return}
+  b.appendChild(el("div","",`${g.suite||""} · world ${g.seed} · goal: craft a ${g.task} · ${g.label||""}`));
+  const bar=el("div","bar");const i=el("i");i.style.width=Math.min(100,100*(g.step||0)/g.max_steps)+"%";if(g.step>=g.max_steps-2)i.className="hot";bar.appendChild(i);
+  b.appendChild(bar);const st=el("div","mut",`step ${g.step||0}/${g.max_steps}  `);
+  if(g.step)st.appendChild(callTag(g));if(g.call_id)st.appendChild(el("span","mono mut"," "+g.call_id));b.appendChild(st);
+  const inv=el("div","inv");const items=Object.entries(g.inventory||{});
+  if(!items.length)inv.appendChild(el("span","mut","empty inventory"));
+  items.forEach(([k,v])=>inv.appendChild(el("span","",`${ICON[k]||k} ${k} ×${v}`)));
+  if(g.sheltered)inv.appendChild(el("span","ok","🏠 sheltered"));
+  else if(g.cue)inv.appendChild(el("span","bad","🧟 You hear groaning nearby"));
+  b.appendChild(inv);
+  if(g.outcome)b.appendChild(el("div",g.outcome.includes("failed")?"bad":"ok","Game feedback: "+g.outcome));
+}
+
+function renderQuota(q){
+  const b=$("quota");b.textContent="";
+  if(REPLAY){b.textContent="Replay: the quota meter is not part of a recording.";return}
+  if(!q||!q.models||!q.models.length){b.textContent="–";return}
+  if(q.note)b.appendChild(el("div","mut",q.note));
+  q.models.forEach(m=>{
+    const r=el("div","row");const used=m.requests,lim=m.rpd;
+    r.appendChild(el("div","",`${m.model}: ${used}${lim?" / "+lim:""} requests today`+(m.tpd?` · ${m.tokens} / ${m.tpd} tokens`:m.tokens?` · ${m.tokens} tokens`:"")));
+    if(lim){const bar=el("div","bar");const i=el("i");i.style.width=Math.min(100,100*used/lim)+"%";if(used>=lim)i.className="hot";bar.appendChild(i);r.appendChild(bar);
+      if(used>=lim)r.appendChild(el("div","bad","STOP: free daily quota used up"))}
+    b.appendChild(r)});
+  if(q.spend){const r=el("div","row");r.appendChild(el("div","",`money spent (paid model): ₹${q.spend.spent_inr.toFixed(2)} of ₹${q.spend.cap_inr} cap`));
+    const bar=el("div","bar");const i=el("i");i.style.width=Math.min(100,100*q.spend.spent_inr/q.spend.cap_inr)+"%";if(q.spend.spent_inr>=q.spend.cap_inr)i.className="hot";bar.appendChild(i);r.appendChild(bar);b.appendChild(r)}
+  if(stoppedReason.startsWith("STOP"))b.appendChild(el("div","bad",stoppedReason));
+}
+
+function renderBA(){
+  const b=$("ba");b.textContent="";const o=reports["original"],c=reports["current"];
+  if(!o){b.textContent="Measured at the start (original) and the end (current).";return}
+  const t=el("table");t.innerHTML="<tr><th></th><th>version</th><th>success</th><th>mean steps</th><th>score</th></tr>";
+  [["original",o],["current",c]].forEach(([n,r])=>{const tr=el("tr");
+    if(!r){tr.appendChild(el("td","",n));const td=el("td","mut","measuring at the end of the run…");td.colSpan=4;tr.appendChild(td)}
+    else[n,r.version,(100*r.success).toFixed(0)+"% ("+Math.round(r.success*r.n)+"/"+r.n+")",r.mean_steps.toFixed(1),r.score.toFixed(3)].forEach(x=>tr.appendChild(el("td","",x)));
+    t.appendChild(tr)});b.appendChild(t)}
+
+// ---- version tree, built from the event stream (works live and in replay) ----------------
+const STATUS_COLOR={current:"ok",accepted:"ok",root:"mut",rejected:"bad",rolled_back:"warn",evaluating:"pend"};
+function ensureNode(v,parent,status,lesson,kind){if(!v||v==="-")return;if(!nodes[v])nodes[v]={version:v,parent:parent||null,status:status||"root",lesson:lesson||"",kind:kind||""};}
+function renderHarness(){
+  const b=$("harness");b.textContent="";
+  if(!curVersion){b.textContent="–";return}
+  b.appendChild(el("div","",`current version: ${curVersion}`));
+  (lessons.length?lessons:["(no lessons yet)"]).forEach(l=>b.appendChild(el("div","mono","• "+l)));
+  const kids={};Object.values(nodes).forEach(n=>{(kids[n.parent||""]=kids[n.parent||""]||[]).push(n)});
+  b.appendChild(el("div","mut","history tree:"));
+  const draw=(p,d)=>(kids[p]||[]).forEach(n=>{const r=el("div","node"+(n.version===selNode?" sel":""));r.style.paddingLeft=(4+d*18)+"px";
+    r.appendChild(el("span","pill "+STATUS_COLOR[n.status],n.status));r.appendChild(el("span","mono"," "+n.version+" "));
+    r.appendChild(el("span","mut",(n.lesson||"").slice(0,60)));r.onclick=()=>showNode(n.version);b.appendChild(r);draw(n.version,d+1)});
+  draw("",0);
+}
+async function showNode(v){
+  selNode=v;renderHarness();const box=$("nodeInfo");box.textContent="";const n=nodes[v],info=nodeInfo[v]||{};
+  box.appendChild(el("div","",`${v} — ${n?n.status:"?"} (${n?n.kind:""})`));
+  if(n&&n.lesson)box.appendChild(el("div","",`lesson: “${n.lesson}”`));
+  const d=info.diff||{};(d.added_lessons||[]).forEach(l=>box.appendChild(el("div","ok","+ "+l)));(d.removed_lessons||[]).forEach(l=>box.appendChild(el("div","bad","- "+l)));
+  if(info.reason)box.appendChild(el("div",info.accepted?"ok":"bad","decision: "+(info.accepted?"accepted — ":"rejected — ")+info.reason));
+  (info.checks||[]).forEach(c=>box.appendChild(el("div",c.pass?"ok":"bad",(c.pass?"✔ ":"✘ ")+c.name+": "+c.detail)));
+  if(!REPLAY){try{const r=await (await fetch("/experiments?child="+encodeURIComponent(v))).json();
+    (r.records||[]).forEach(x=>box.appendChild(el("pre","mut",`experiment record ${x.exp_id||""} · ${x.phase}/${x.round} · ${x.decision} · proposer ${x.proposer_model||"-"} · requests ${x.requests_used} · hash ${(x.hash||"").slice(0,12)} prev ${(x.prev_hash||"").slice(0,12)} · ${x.call_ids}`)))}catch(_){}}
+}
+
+function candidate(e){
+  cur={checks:{},diff:e.diff,child:e.child,parent:e.parent,kind:e.kind,side:e.side,final:null,rolled:false};
+  ensureNode(e.parent,null,"root","(parent)","");ensureNode(e.child,e.parent,"evaluating",e.lesson,e.kind);
+  nodeInfo[e.child]={diff:e.diff};
+  const base=verLessons[e.parent]||(!curVersion||e.parent===curVersion?lessons:[]),d=e.diff||{},gone=new Set(d.removed_lessons||[]);
+  if(!verLessons[e.parent])verLessons[e.parent]=base.slice();
+  verLessons[e.child]=base.filter(l=>!gone.has(l)).concat(d.added_lessons||[]);
+  renderGate();renderHarness();
+}
+function renderGate(){
+  const b=$("gate");b.textContent="";if(!cur.child){b.textContent="No candidate yet.";return}
+  b.appendChild(el("div","",`candidate ${cur.child} (${cur.kind}${cur.side?", side branch":""}) vs parent ${cur.parent}`));
+  const d=cur.diff||{};(d.added_lessons||[]).forEach(l=>b.appendChild(el("div","mono ok","+ "+l)));(d.removed_lessons||[]).forEach(l=>b.appendChild(el("div","mono bad","- "+l)));
+  (d.files_changed||[]).filter(f=>f!=="memory.json").forEach(f=>b.appendChild(el("div","mono bad","touches "+f)));
+  CHECKS.forEach(n=>{const c=cur.checks[n],r=el("div","check");
+    r.appendChild(el("b",c?(c.pass?"ok":"bad"):"pend",(c?(c.pass?"✔ ":"✘ "):"· ")+n));
+    r.appendChild(el("span",c?"":"pend",c?c.detail:(cur.final?"not run (an earlier check decided)":"pending…")));
+    if(c){const bits=[];if(c.n!=null)bits.push("n="+c.n);if(c.mean!=null)bits.push("mean="+c.mean);if(c.p!=null)bits.push("p="+c.p);
+      if(c.ci)bits.push("95% CI ["+c.ci.join(", ")+"]");if(c.threshold)bits.push("threshold: "+c.threshold);
+      if(bits.length)r.appendChild(el("div","sub mono",bits.join(" · ")))}
+    b.appendChild(r)});
+  // candidate bar beside the placebo bar (placebo gain = candidate gain - (candidate vs placebo))
+  const h=cur.checks["held-out gain"],p=cur.checks["beats placebo"];
+  if(h&&h.mean!=null){const g=h.mean,pg=p&&p.mean!=null?g-p.mean:null,mx=Math.max(0.1,Math.abs(g),Math.abs(pg||0));
+    const bar=(label,v,cls)=>{const row=el("div","pbar");row.appendChild(el("span","",label));const w=el("div","bar");const i=el("i",cls);i.style.width=Math.max(2,100*Math.abs(v)/mx)+"%";w.appendChild(i);row.appendChild(w);row.appendChild(el("span","mono",(v>=0?"+":"")+v.toFixed(3)));return row};
+    b.appendChild(el("div","mut","gain over the parent (same worlds):"));b.appendChild(bar("candidate",g,""));
+    if(pg!=null)b.appendChild(bar("placebo",pg,"mutc"));else b.appendChild(el("div","mut",cur.final?"placebo not evaluated (an earlier check decided)":"placebo: pending…"))}
+  if(cur.final){const f=cur.rolled?{t:"ROLLED BACK: "+cur.final.reason,k:"warn"}:cur.final.accepted?{t:"ACCEPTED: "+cur.final.reason,k:"ok"}:{t:"REJECTED: "+cur.final.reason,k:"bad"};
+    const v=el("div","verdict",f.t);v.style.color=`var(--${f.k})`;v.style.borderColor=`var(--${f.k})`;b.appendChild(v)}
+}
+
+function logEvent(e){
+  const s=e.type+" "+JSON.stringify(Object.fromEntries(Object.entries(e).filter(([k])=>!["id","type","ts","prompt","episodes","budget"].includes(k)))).slice(0,220);
+  pushRow($("events"),el("div","row",s),150)}
+
+function resetView(){["decisions","mistakes","events"].forEach(i=>$(i).textContent="");cur={};nodes={};nodeInfo={};lessons=[];verLessons={};curVersion="";selNode="";reports={};
+  $("proposal").textContent="";$("nodeInfo").textContent="";renderGate();renderHarness();renderBA();banner("")}
+
+function handle(e){
+  lastId=Math.max(lastId,e.id||0);logEvent(e);if(window.gv)gv.push(e);
+  switch(e.type){
+  case"run_start":resetView();stoppedReason="";setBadge(REPLAY?"REPLAY (recorded"+(e.mode==="mock"||REPLAY_SIM?", simulated":"")+")":e.badge,REPLAY?"replay":e.mode);
+    $("budget").textContent=e.budget?"Budget per round (model calls): first ≈"+e.budget.first_round_typical+" typical / "+e.budget.first_round_worst+" worst; later ≈"+e.budget.later_round_typical+" / "+e.budget.later_round_worst:"";break;
+  case"demo_start":{banner(`New demo game: world ${e.seed}, goal ${e.task}, harness ${e.version} — ${e.mode==="real"?"every step is a LIVE model call":"SIMULATED (mock) calls"}`,"warn");
+    if(!curVersion){curVersion=e.version;ensureNode(e.version,null,"root","(original harness)","")}break}
+  case"demo_end":banner(`Demo game finished: ${e.success?"SUCCESS":"failed"} in ${e.steps} steps; mistakes: ${(e.mistakes||[]).join(", ")||"none"}`,e.success?"ok":"bad");break;
+  case"episode_start":renderGame({...e,step:0,inventory:{}});break;
+  case"step":{renderGame(e);const obs=(e.prompt||"").split("Observation:")[1]||"";const r=el("div","row");
+    const h=el("div","mut");h.appendChild(callTag(e));h.appendChild(document.createTextNode(`[${e.suite} w${e.seed} step ${e.step}] sent: ${obs.split("Valid actions")[0].trim()}`));r.appendChild(h);
+    r.appendChild(el("div","",`raw reply: ${JSON.stringify(e.raw)} → action: ${e.action}`));
+    r.appendChild(el("div",e.outcome.includes("failed")?"bad":"ok","→ "+e.outcome));pushRow($("decisions"),r,120);break}
+  case"episode_end":{const r=el("div","row");r.appendChild(el("span",e.success?"ok":"bad",(e.success?"✔ ":"✘ ")+`${e.suite} world ${e.seed} (${e.task}) ${e.steps} steps`));
+    r.appendChild(el("span","mut"," · mistakes: "+(e.mistakes.length?e.mistakes.join(", "):"none")));pushRow($("mistakes"),r,80);break}
+  case"mistakes":{const r=el("div","row warn","Round "+e.round+" training mistakes: "+(Object.entries(e.counts).map(([k,v])=>k+"×"+v).join(", ")||"none"));pushRow($("mistakes"),r,80);break}
+  case"round_start":if(!curVersion||e.version){if(!curVersion){curVersion=e.version;ensureNode(e.version,null,"root","(original harness)","");renderHarness()}}break;
+  case"proposal":{const b=$("proposal");b.textContent="";b.appendChild(el("div","",`style: ${e.style} · written by ${e.model||"?"}`));
+    b.appendChild(el("div",e.lesson?"mono":"warn",e.lesson?"“"+e.lesson+"”":"no lesson: "+e.status));
+    b.appendChild(el("div","mut","failure counts seen: "+JSON.stringify(e.counts)));break}
+  case"candidate":candidate(e);break;
+  case"gate_check":cur.checks[e.name]=e;renderGate();break;
+  case"decision":{cur.final={accepted:e.accepted,reason:e.reason};renderGate();
+    const info=nodeInfo[e.child]=Object.assign(nodeInfo[e.child]||{},{accepted:e.accepted,reason:e.reason,checks:Object.values(cur.checks)});
+    if(nodes[e.child]){ if(e.accepted&&!e.side){const pv=nodes[curVersion];if(pv&&pv.status==="current")pv.status=(pv.parent?"accepted":"root");nodes[e.child].status="current";
+        curVersion=e.child;lessons=(verLessons[e.child]||lessons).slice()} else nodes[e.child].status=e.accepted?"accepted":"rejected"}
+    renderHarness();banner((e.accepted?"ACCEPTED ":"REJECTED ")+e.child+": "+e.reason,e.accepted?"ok":"bad");break}
+  case"audit":banner(`Audit of ${e.version} on fresh old-skill worlds: ${e.before.toFixed(3)} → ${e.after.toFixed(3)} ${e.regressed?"(REGRESSED)":"(ok)"}`,e.regressed?"bad":"ok");break;
+  case"rollback":{if(nodes[e.version])nodes[e.version].status="rolled_back";if(nodes[e.restored])nodes[e.restored].status="current";curVersion=e.restored;lessons=(verLessons[e.restored]||[]).slice();
+    if(cur.child===e.version){cur.rolled=true;cur.final=cur.final||{accepted:true,reason:""};cur.final.reason="audit dropped "+e.drop.toFixed(3);renderGate()}
+    renderHarness();banner(`ROLLED BACK: restored ${e.restored}, dropped ${e.version}`,"warn");break}
+  case"report":reports[e.stage]=e;renderBA();break;
+  case"stopped":stoppedReason=e.reason;banner(e.reason,e.reason.startsWith("STOP")?"bad":"warn");if(!REPLAY)refreshState();break;
+  case"error":banner("ERROR: "+e.message,"bad");break}
+}
+
+async function refreshState(){
+  if(REPLAY)return;
+  try{const s=await (await fetch("/state")).json();
+    $("status").textContent=s.status+(s.playing?" · playing a demo game":"")+(s.params&&s.params.rounds?` · ${s.params.rounds} rounds max`:"");
+    if(s.badge&&$("live").offsetParent)setBadge(s.badge,s.mode||"idle");
+    renderQuota(s.quota);
+    const busy=(s.status==="running"||s.status==="paused");
+    $("start").disabled=busy||s.playing;$("play").disabled=s.status==="running"||s.playing;
+    $("pause").disabled=s.status!=="running";$("resume").disabled=s.status!=="paused";$("stop").disabled=!busy;
+  }catch(_){}
+}
+function connect(){
+  if(es)es.close();es=new EventSource("/events?after="+lastId);
+  es.onmessage=m=>{try{handle(JSON.parse(m.data))}catch(x){console.error(x)}};
+}
+async function post(path,body){
+  const r=await fetch(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+  const j=await r.json();if(!r.ok)banner(j.error||"request refused","bad");refreshState();return j}
+const mode=()=>({mode:$("mode").value,confirm_no_billing:$("confirm").checked});
+$("start").onclick=()=>post("/control",{action:"start",rounds:+$("rounds").value,...mode()});
+$("play").onclick=()=>post("/play",mode());
+["pause","resume","stop"].forEach(a=>$(a).onclick=()=>post("/control",{action:a}));
+$("mode").onchange=async()=>{$("confirmWrap").classList.toggle("hidden",$("mode").value!=="real");
+  if($("mode").value==="real"){const b=await (await fetch("/budget")).json();
+    banner(`Real mode calls the model in config.json (Gemini: free daily quota; Claude Haiku: paid, capped by max_spend_inr). One round ≈ ${b.first_round_typical} requests typical (${b.first_round_worst} worst case) for the first round, ≈${b.later_round_typical} later; “Start a new game” uses about 10 live requests. Confirm the box, then Start.`,"warn")}else banner("")};
+function tab(which){const w=which===true?"hist":which===false?"live":which;window.GK_TAB=w;document.body.dataset.tab=w;
+  ["live","human","hist"].forEach(k=>$(k).classList.toggle("hidden",k!==w));
+  $("tLive").classList.toggle("on",w==="live");$("tHuman").classList.toggle("on",w==="human");$("tHist").classList.toggle("on",w==="hist");
+  if(w==="hist"){setBadge("SUMMARY","idle")}
+  else if(w==="human"){setBadge("HUMAN · you are playing, no AI","human");if(!hv.S)humanNew()}
+  else if(REPLAY)setBadge("REPLAY (recorded"+(REPLAY_SIM?", simulated":"")+")","replay");else refreshState()}
+$("tLive").onclick=()=>tab("live");$("tHist").onclick=()=>tab("hist");$("tHuman").onclick=()=>tab("human");
+async function loadHistory(){return;
+  const b=$("histBody");b.textContent="";
+  if(REPLAY){b.textContent="Replay mode: the saved experiment table is not part of a recording.";return}
+  const h=await (await fetch("/history")).json();
+  b.appendChild(el("div","mut",h.label+` · ${h.experiments.length} saved experiments`));
+  try{const rf=(await (await fetch("/replays")).json()).files;
+    const d=el("div","");d.appendChild(el("b","","Replay a recorded run: "));
+    if(!rf.length)d.appendChild(el("span","mut","none recorded yet"));
+    rf.forEach(f=>{const a=el("a","",f);a.href="?replay="+encodeURIComponent(f);a.style.marginRight="12px";d.appendChild(a)});b.appendChild(d)}catch(_){}
+  if(h.acceptance){const a=el("div","");a.appendChild(el("b","","Acceptance summary:"));(h.acceptance.criteria||[]).forEach(c=>a.appendChild(el("div",c.status==="PASS"?"ok":"bad",`${c.status}: ${c.name} — ${c.evidence}`)));b.appendChild(a)}
+  const t=el("table");t.innerHTML="<tr><th>when</th><th>mode</th><th>phase/round</th><th>kind</th><th>versions</th><th>decision</th><th>reason</th><th>lesson</th></tr>";
+  h.experiments.slice().reverse().forEach(x=>{const tr=el("tr");
+    [new Date(x.ts*1000).toLocaleString(),x.mode==="real"?"REAL":"MOCK",`${x.phase}/${x.round}`,x.kind+(x.side_branch?" (side)":""),`${x.parent} → ${x.child}`,x.decision,x.reason,x.lesson].forEach((v,i)=>{
+      const td=el("td",i===5?(x.decision==="accepted"||x.decision==="kept"?"ok":"bad"):i===1?(x.mode==="real"?"ok":"warn"):"",v);tr.appendChild(td)});t.appendChild(tr)});
+  b.appendChild(t)}
+
+// ---- replay: plays a recorded events file (jsonl from /replay, or a static json file) ---------
+let replayEvents=[],replayTimer=null,replayPos=0;
+function parseEvents(text){text=text.trim();try{const j=JSON.parse(text);return Array.isArray(j)?j:(j.events||[])}catch(_){return text.split("\n").filter(Boolean).map(l=>JSON.parse(l))}}
+async function startReplay(){
+  $("controls").classList.add("hidden");$("replayCtl").classList.remove("hidden");$("status").textContent="REPLAY of a recorded run — nothing here is live";
+  setBadge("REPLAY (recorded)","replay");banner("REPLAY: this page is playing back a recorded run. No model is being called.","warn");renderQuota(null);
+  let text;try{const r=await fetch("/replay?file="+encodeURIComponent(REPLAY));if(!r.ok)throw 0;text=await r.text()}catch(_){text=await (await fetch(REPLAY)).text()}
+  let ev=parseEvents(text);const starts=ev.map((e,i)=>e.type==="run_start"?i:-1).filter(i=>i>=0);if(starts.length)ev=ev.slice(starts[starts.length-1]);
+  replayEvents=ev;REPLAY_SIM=ev.some(x=>x.mode==="mock");setBadge("REPLAY (recorded"+(REPLAY_SIM?", simulated":"")+")","replay");playFrom(0)}
+let skipReq=false;
+const GAME_EV=new Set(["episode_start","step","episode_end","proposal","decision","rollback"]);
+function playFrom(i){clearTimeout(replayTimer);replayPos=i;if(i===0){lastId=0;resetView();gv.reset()}
+  const delay=+$("speed").value;
+  const fin=()=>banner("REPLAY finished ("+replayEvents.length+" recorded events). Nothing was called.","warn");
+  const one=()=>{const e=replayEvents[replayPos++];handle(e);if(e.type==="run_start")setBadge("REPLAY (recorded"+(e.mode==="mock"||REPLAY_SIM?", simulated":"")+")","replay");return e};
+  const tick=()=>{if(replayPos>=replayEvents.length){if(!gv.busy())return fin();replayTimer=setTimeout(tick,100);return}
+    if(delay===0){while(replayPos<replayEvents.length)one();gv.fastForward();return fin()}
+    if(skipReq){const toM=skipReq==="moment";skipReq=false;gv.skipGame(toM);   // skip: run events up to the next game / learning moment
+      const stop=toM?["proposal","decision","rollback"]:["episode_start","proposal","decision","rollback"];
+      while(replayPos<replayEvents.length){const nx=replayEvents[replayPos];if(stop.includes(nx.type))break;one()}
+      gv.skipGame(toM);replayTimer=setTimeout(tick,0);return}
+    if(gv.busy()){replayTimer=setTimeout(tick,60);return}       // wait for the picture to catch up
+    while(replayPos<replayEvents.length&&!GAME_EV.has(one().type)){}
+    replayTimer=setTimeout(tick,delay)};tick()}
+$("restart").onclick=()=>playFrom(0);
+
+// ---- the game world ---------------------------------------------------------------------
+function tagFor(S){if(!S)return el("span","mut","–");if(S.mode==="human")return el("span","badge b-human","HUMAN");
+  if(S.mode==="mock")return el("span","tag t-sim","SIMULATED");if(!S.step)return el("span","tag t-live","REAL");return callTag(S)}
+function showSide(S,ev,phase){
+  const w=$("gWho");w.textContent="";const st=$("gStory");st.textContent="";if(!S){w.textContent="nothing yet";return}
+  w.appendChild(tagFor(Object.assign({},S,ev?{cached:ev.cached,latency_ms:ev.latency_ms,step:ev.step}:{})));
+  w.appendChild(document.createTextNode(" "+[S.mode==="real"?gkModelName(S.model)+" (real model"+(/^(claude|gpt)/.test(String(S.model||""))?", paid":"")+")":S.mode==="mock"?"mock agent (simulated, no model)":S.mode==="human"?"you":"?",
+    S.mode==="human"?"":"harness "+S.version,S.label,(S.suite||"")+" world "+S.seed].filter(Boolean).join(" · ")));
+  const row=(k,v,cls)=>{st.appendChild(el("b","",k));st.appendChild(el("div",cls||"",v))};
+  row("Objective",`craft a ${S.task}`+(S.success?" — done":""));
+  if(ev&&ev.step){
+    row("Decision",S.mode==="human"?`you chose “${ev.action}”`:`${S.mode==="mock"?"mock agent":gkModelName(S.model)} replied ${JSON.stringify(ev.raw)} → ${ev.action}`,"mono");
+    row("Action",ev.plan?"engine: "+ev.plan:phase==="decide"?"engine: carrying out “"+ev.action+"”…":"engine: no movement (the action failed on the spot)");
+    row("Result",phase==="decide"?"…":ev.outcome.replace(/^Last action '[^']+' /,""),phase==="decide"?"mut":(/failed/.test(ev.outcome)?"bad":"ok"));
+  }
+  row("Still needed",(S.needed&&S.needed.length?S.needed.join("; "):S.success?"nothing":"–"),"mut");
+  const D=window.gv&&window.gv.D;row("Engine",`decision ${S.step||0}/${S.max_steps||14} · tick ${D?D.tick:0}`+(D&&D.player?` · at (${D.player.join(", ")})`:"")+(ev&&ev.call_id?" · call "+ev.call_id:""),"mono mut");
+}
+const gv=new GameView($("world"),{context:REPLAY?"replay":"live",onShow:showSide});window.gv=gv;
+$("gPause").onclick=()=>{if(gv.paused){gv.play();$("gPause").textContent="Pause view"}else{gv.pause();$("gPause").textContent="Play view"}};
+$("gStep").onclick=()=>{gv.stepOnce();$("gPause").textContent="Play view"};
+$("gSkip").onclick=()=>{if(REPLAY)skipReq="game";else gv.skipGame(false)};
+$("gMoment").onclick=()=>{if(REPLAY)skipReq="moment";else gv.skipGame(true)};
+$("gSpeed").onchange=()=>gv.setSpeed(+$("gSpeed").value);
+$("gFollow").onchange=()=>{gv.follow=$("gFollow").checked};
+if(REPLAY)$("gFollowWrap").classList.add("hidden");
+setInterval(()=>{const S=gv.S;$("gInfo").textContent=S?`showing step ${S.step} of ${S.suite} world ${S.seed} · ${gv.queue.length} queued`:""},400);
+
+// ---- play yourself: the Python engine decides, the page only sends the chosen action -------
+const ACTS=["collect wood","collect stone","collect iron","craft table","craft pickaxe","craft sword","shelter"];
+const hv=new GameView($("hworld"),{context:"human",onShow:(S,ev,phase,view)=>{const b=$("hState");b.textContent="";if(!S)return;
+  const st=el("div","story");const row=(k,v,cls)=>{st.appendChild(el("b","",k));st.appendChild(el("div",cls||"",v))};
+  row("Objective",`craft a ${S.task}`+(S.success?" — done":""));
+  if(ev&&ev.step){row("You chose",ev.action,"mono");row("Engine",ev.plan||(phase==="decide"?"carrying it out…":"no movement"));
+    if(phase!=="decide")row("Result",ev.outcome.replace(/^Last action '[^']+' /,""),/failed/.test(ev.outcome)?"bad":"ok")}
+  row("Still needed",S.needed&&S.needed.length?S.needed.join("; "):"–","mut");
+  row("Engine state",`decision ${S.step||0}/${S.max_steps} · tick ${view.D?view.D.tick:0}`+(view.D&&view.D.player?` · at (${view.D.player.join(", ")})`:""),"mono mut");
+  b.appendChild(st)}});window.hv=hv;
+async function hpost(path,body){try{const r=await fetch(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body||{})});
+  const j=await r.json();if(!r.ok){banner(j.error||"refused","bad");return null}return j}catch(_){banner("Play yourself needs the local app (python app.py); it is not available on the static site.","warn");return null}}
+async function humanNew(){const s=await hpost("/human/new");if(s){banner("");hv.push({...s,type:"human_start"})}}
+async function humanAct(a){const s=await hpost("/human/act",{action:a});if(!s)return;hv.push({...s,type:"human_step"});
+  if(s.done)hv.push({type:"episode_end",success:s.success,steps:s.step,mistakes:s.mistakes})}
+ACTS.forEach((a,i)=>{const b=el("button","",`${i+1} · ${a}`);b.onclick=()=>humanAct(a);$("hActs").appendChild(b)});
+$("hNew").onclick=humanNew;
+document.addEventListener("keydown",k=>{if($("human").classList.contains("hidden"))return;const n=+k.key;if(n>=1&&n<=7)humanAct(ACTS[n-1])});
+
+if(new URLSearchParams(location.search).get("speed")==="instant")$("speed").value="0";
+if(REPLAY){startReplay();setTimeout(()=>tab("human"),0)}else{connect();refreshState();setInterval(refreshState,2500)}
+</script></body></html>
